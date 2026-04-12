@@ -66,14 +66,14 @@ const PortalDashboard = () => {
   };
 
   return (
-    <div className='space-y-8'>
+    <div className='space-y-5 sm:space-y-8'>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h1 className='text-2xl font-bold'>Dashboard</h1>
-        <p className='text-muted-foreground'>Overview of your account</p>
+        <h1 className='text-xl font-bold sm:text-2xl'>Dashboard</h1>
+        <p className='text-sm text-muted-foreground sm:text-base'>Overview of your account</p>
       </motion.div>
 
       <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
@@ -85,13 +85,17 @@ const PortalDashboard = () => {
             transition={{ delay: i * 0.1, duration: 0.4 }}
           >
             <Card className='border border-border'>
-              <CardContent className='flex items-center gap-4 p-6'>
-                <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${card.bg}`}>
-                  <card.icon className={`h-6 w-6 ${card.color}`} />
+              <CardContent className='flex items-center gap-3 p-4 sm:gap-4 sm:p-6'>
+                <div
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl sm:h-12 sm:w-12 ${card.bg}`}
+                >
+                  <card.icon className={`h-5 w-5 sm:h-6 sm:w-6 ${card.color}`} />
                 </div>
-                <div>
-                  <p className='text-sm text-muted-foreground'>{card.label}</p>
-                  <p className='text-2xl font-bold'>{card.value}</p>
+                <div className='min-w-0'>
+                  <p className='text-xs text-muted-foreground sm:text-sm'>{card.label}</p>
+                  <p className='text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl'>
+                    {card.value}
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -118,15 +122,22 @@ const PortalDashboard = () => {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.4 + i * 0.05, duration: 0.3 }}
-                    className='flex items-center gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/50'
+                    className='flex items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/50 sm:items-center'
                   >
                     <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10'>
                       <Icon className='h-4 w-4 text-primary' />
                     </div>
                     <div className='min-w-0 flex-1'>
-                      <p className='truncate text-sm font-medium'>{activity.description}</p>
+                      <p className='text-sm font-medium leading-snug sm:truncate'>
+                        {activity.description}
+                      </p>
+                      <span className='mt-1 block text-xs text-muted-foreground sm:hidden'>
+                        {activity.date}
+                      </span>
                     </div>
-                    <span className='shrink-0 text-xs text-muted-foreground'>{activity.date}</span>
+                    <span className='hidden shrink-0 text-xs text-muted-foreground sm:block'>
+                      {activity.date}
+                    </span>
                   </motion.div>
                 );
               })}

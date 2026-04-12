@@ -98,13 +98,33 @@ const ForgotPassword = () => {
     setOtpError('');
   };
 
+  const verifyOtpCode = async (code: string) => {
+    if (code.length !== 6) {
+      setOtpError('Please enter all 6 digits');
+      return;
+    }
+
+    setLoading(true);
+    await new Promise((r) => setTimeout(r, 600));
+    setLoading(false);
+    setStep('reset');
+  };
+
   const handleOtpChange = (index: number, value: string) => {
     if (!/^\d?$/.test(value)) return;
     const next = [...otp];
     next[index] = value;
     setOtp(next);
     setOtpError('');
-    if (value && index < 5) document.getElementById(`otp-${index + 1}`)?.focus();
+
+    if (value && index < 5) {
+      document.getElementById(`otp-${index + 1}`)?.focus();
+      return;
+    }
+
+    if (value && index === 5 && !loading) {
+      void verifyOtpCode(next.join(''));
+    }
   };
 
   const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
@@ -115,15 +135,7 @@ const ForgotPassword = () => {
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    const code = otp.join('');
-    if (code.length !== 6) {
-      setOtpError('Please enter all 6 digits');
-      return;
-    }
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setLoading(false);
-    setStep('reset');
+    await verifyOtpCode(otp.join(''));
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {

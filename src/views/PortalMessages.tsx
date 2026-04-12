@@ -12,6 +12,8 @@ import { queryKeys } from '@/lib/server-state/query-keys';
 import type { PortalMessage } from '@/lib/portal-mock-data';
 import { useIsMobile } from '@/hooks/useMobile';
 
+const TABLET_BREAKPOINT = 1024;
+
 const formatTimestamp = (date: Date) => {
   const now = Date.now();
   const diff = now - date.getTime();
@@ -39,6 +41,7 @@ const PortalMessages = () => {
 
   const [input, setInput] = useState('');
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [isTablet, setIsTablet] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
@@ -48,6 +51,17 @@ const PortalMessages = () => {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeMessages.length]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(`(max-width: ${TABLET_BREAKPOINT}px)`);
+    const onChange = () => {
+      setIsTablet(window.innerWidth <= TABLET_BREAKPOINT);
+    };
+
+    mediaQuery.addEventListener('change', onChange);
+    onChange();
+    return () => mediaQuery.removeEventListener('change', onChange);
+  }, []);
 
   const handleSend = () => {
     if (!input.trim() || !activeProvider) return;
@@ -74,18 +88,19 @@ const PortalMessages = () => {
     return providerMsgs[providerMsgs.length - 1];
   };
 
-  const showList = !activeProvider || !isMobile;
+  const isCompactLayout = isMobile || isTablet;
+  const showList = !activeProvider || !isCompactLayout;
   const showChat = Boolean(activeProvider);
 
   return (
-    <div className='flex h-[calc(100vh-10rem)] flex-col space-y-4'>
+    <div className='flex h-[calc(100dvh-9.5rem)] min-h-[28rem] flex-col space-y-3 sm:space-y-4 lg:h-[calc(100dvh-8.5rem)]'>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h1 className='text-2xl font-bold'>Messages</h1>
-        <p className='text-muted-foreground'>Chat with your service providers</p>
+        <h1 className='text-xl font-bold sm:text-2xl'>Messages</h1>
+        <p className='text-sm text-muted-foreground sm:text-base'>Chat with your service providers</p>
       </motion.div>
 
       <div className='flex flex-1 gap-4 overflow-hidden'>
@@ -96,7 +111,7 @@ const PortalMessages = () => {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               className={`overflow-hidden rounded-xl border border-border bg-card ${
-                isMobile ? 'w-full' : 'w-80 shrink-0'
+                isCompactLayout ? 'w-full' : 'w-72 shrink-0 xl:w-80'
               } flex flex-col`}
             >
               <div className='border-b border-border p-3'>
@@ -156,7 +171,7 @@ const PortalMessages = () => {
               className='flex flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card'
             >
               <div className='flex items-center gap-3 border-b border-border p-3'>
-                {isMobile && (
+                {isCompactLayout && (
                   <Button
                     variant='ghost'
                     size='icon'
@@ -171,13 +186,17 @@ const PortalMessages = () => {
                     {activeProviderData ? getInitials(activeProviderData.businessName) : '??'}
                   </AvatarFallback>
                 </Avatar>
-                <div>
-                  <p className='text-sm font-semibold'>{activeProviderData?.businessName} Team</p>
-                  <p className='text-[11px] text-muted-foreground'>{activeProviderData?.supportEmail}</p>
+                <div className='min-w-0'>
+                  <p className='truncate text-sm font-semibold'>
+                    {activeProviderData?.businessName} Team
+                  </p>
+                  <p className='truncate text-[11px] text-muted-foreground'>
+                    {activeProviderData?.supportEmail}
+                  </p>
                 </div>
               </div>
 
-              <div className='flex-1 space-y-4 overflow-y-auto p-4'>
+              <div className='flex-1 space-y-4 overflow-y-auto p-3 sm:p-4'>
                 {activeMessages.map((msg, i) => {
                   const isClient = msg.sender === 'client';
                   return (
@@ -199,7 +218,11 @@ const PortalMessages = () => {
                           {isClient ? 'YO' : getInitials(activeProviderData?.businessName || '?')}
                         </AvatarFallback>
                       </Avatar>
-                      <div className={`max-w-[70%] space-y-1 ${isClient ? 'items-end text-right' : ''}`}>
+                      <div
+                        className={`max-w-[82%] space-y-1 sm:max-w-[75%] ${
+                          isClient ? 'items-end text-right' : ''
+                        }`}
+                      >
                         <div className={`flex items-center gap-2 ${isClient ? 'justify-end' : ''}`}>
                           <span className='text-xs font-medium'>{msg.senderName}</span>
                           <span className='text-[10px] text-muted-foreground'>
@@ -222,7 +245,7 @@ const PortalMessages = () => {
                 <div ref={bottomRef} />
               </div>
 
-              <div className='flex items-center gap-2 border-t border-border p-3'>
+              <div className='flex items-center gap-2 border-t border-border p-2.5 sm:p-3'>
                 <Button variant='ghost' size='icon' className='shrink-0 text-muted-foreground'>
                   <Paperclip size={18} />
                 </Button>
@@ -247,7 +270,7 @@ const PortalMessages = () => {
           ) : null}
         </AnimatePresence>
 
-        {!activeProvider && !isMobile && (
+        {!activeProvider && !isCompactLayout && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
