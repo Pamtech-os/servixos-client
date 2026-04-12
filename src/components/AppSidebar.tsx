@@ -31,10 +31,25 @@ const navItems = [
   { label: 'Contacts', href: '/contacts', icon: Contact },
 ] as const;
 
-const SidebarLogo = memo(() => (
-  <div className='flex items-center gap-2 px-4 py-5'>
-    <Image src={servixLogo} alt='Client Portal' className='h-8 w-8' priority />
-    <span className='font-display text-lg font-bold'>Client Portal</span>
+interface SidebarLogoProps {
+  compact?: boolean;
+}
+
+const SidebarLogo = memo(({ compact = false }: SidebarLogoProps) => (
+  <div className={compact ? 'flex min-w-0 items-center gap-2' : 'flex items-center gap-2 px-4 py-5'}>
+    <Image
+      src={servixLogo}
+      alt='Client Portal'
+      className={compact ? 'h-7 w-7 shrink-0' : 'h-8 w-8 shrink-0'}
+      priority
+    />
+    <span
+      className={`font-display font-bold ${
+        compact ? 'max-w-[7.5rem] truncate text-sm sm:max-w-none sm:text-base' : 'text-lg'
+      }`}
+    >
+      Client Portal
+    </span>
   </div>
 ));
 SidebarLogo.displayName = 'SidebarLogo';
@@ -102,15 +117,15 @@ const AppSidebar = () => {
 
   return (
     <>
-      <aside className='fixed left-0 top-0 z-40 hidden h-screen w-60 border-r border-border bg-card md:block'>
+      <aside className='fixed left-0 top-0 z-40 hidden h-screen w-60 border-r border-border bg-card lg:block'>
         {navContent}
       </aside>
 
-      <div className='fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b border-border bg-card px-4 py-3 md:hidden'>
-        <SidebarLogo />
+      <div className='fixed left-0 right-0 top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-card px-4 lg:hidden'>
+        <SidebarLogo compact />
         <button
           onClick={() => setMobileSidebarOpen((prev) => !prev)}
-          className='rounded-lg p-2 text-foreground'
+          className='shrink-0 rounded-lg p-2 text-foreground'
         >
           {mobileSidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
@@ -123,7 +138,7 @@ const AppSidebar = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className='fixed inset-0 z-50 bg-background/60 backdrop-blur-sm md:hidden'
+              className='fixed inset-0 z-50 bg-background/60 backdrop-blur-sm lg:hidden'
               onClick={() => setMobileSidebarOpen(false)}
             />
             <motion.aside
@@ -131,7 +146,7 @@ const AppSidebar = () => {
               animate={{ x: 0 }}
               exit={{ x: -260 }}
               transition={{ type: 'spring', damping: 25, stiffness: 250 }}
-              className='fixed left-0 top-0 z-50 h-screen w-60 border-r border-border bg-card md:hidden'
+              className='fixed left-0 top-0 z-50 h-screen w-60 border-r border-border bg-card lg:hidden'
             >
               {navContent}
             </motion.aside>
