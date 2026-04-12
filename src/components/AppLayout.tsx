@@ -55,11 +55,11 @@ const AppLayout = ({ children }: AppLayoutProps) => {
   return (
     <div className='min-h-screen bg-background'>
       <AppSidebar />
-      <div className='md:ml-60'>
-        <div className='pt-14 md:pt-0'>
+      <div className='lg:ml-60'>
+        <div className='pt-14 lg:pt-0'>
           <AppHeader />
           <main>
-            <div className='container mx-auto p-4 md:p-6 lg:p-8'>{children}</div>
+            <div className='container mx-auto p-3 sm:p-4 lg:p-6 2xl:p-8'>{children}</div>
           </main>
         </div>
       </div>
