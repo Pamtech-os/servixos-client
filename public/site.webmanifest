@@ -1,0 +1,16 @@
+{
+  "name": "ServixOS Client Portal",
+  "short_name": "ServixOS",
+  "description": "Secure client portal for invoices, files, contracts, and provider communication.",
+  "start_url": "/login",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}
