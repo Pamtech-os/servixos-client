@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import ModernSpinner from '@/components/ModernSpinner';
 import {
   Table,
   TableBody,
@@ -20,7 +21,9 @@ const statusStyles: Record<string, string> = {
 };
 
 const PortalInvoices = () => {
-  const { data: invoices = [] } = usePortalInvoicesQuery();
+  const { data: invoices, isPending } = usePortalInvoicesQuery();
+  const invoiceRows = invoices ?? [];
+  const isInitialLoading = isPending && !invoices;
 
   return (
     <div className='space-y-6'>
@@ -51,31 +54,48 @@ const PortalInvoices = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {invoices.map((invoice, i) => (
-                  <motion.tr
-                    key={invoice.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.15 + i * 0.04, duration: 0.3 }}
-                    className='border-b border-border transition-colors hover:bg-muted/50'
-                  >
-                    <TableCell className='font-medium'>{invoice.invoiceNumber}</TableCell>
-                    <TableCell>{invoice.issuedDate}</TableCell>
-                    <TableCell>{invoice.dueDate}</TableCell>
-                    <TableCell className='text-right font-semibold'>
-                      ${invoice.amount.toLocaleString()}
+                {isInitialLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className='py-10'>
+                      <div className='flex items-center justify-center gap-2 text-muted-foreground'>
+                        <ModernSpinner size='sm' color='primary' />
+                        <span className='text-sm'>Loading invoices...</span>
+                      </div>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant='outline' className={statusStyles[invoice.status]}>
-                        {invoice.status === 'unpaid'
-                          ? 'Unpaid'
-                          : invoice.status === 'partial'
-                          ? 'Partial'
-                          : 'Paid'}
-                      </Badge>
+                  </TableRow>
+                ) : invoiceRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className='py-10 text-center text-muted-foreground'>
+                      No invoices available yet.
                     </TableCell>
-                  </motion.tr>
-                ))}
+                  </TableRow>
+                ) : (
+                  invoiceRows.map((invoice, i) => (
+                    <motion.tr
+                      key={invoice.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.15 + i * 0.04, duration: 0.3 }}
+                      className='border-b border-border transition-colors hover:bg-muted/50'
+                    >
+                      <TableCell className='font-medium'>{invoice.invoiceNumber}</TableCell>
+                      <TableCell>{invoice.issuedDate}</TableCell>
+                      <TableCell>{invoice.dueDate}</TableCell>
+                      <TableCell className='text-right font-semibold'>
+                        ${invoice.amount.toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant='outline' className={statusStyles[invoice.status]}>
+                          {invoice.status === 'unpaid'
+                            ? 'Unpaid'
+                            : invoice.status === 'partial'
+                            ? 'Partial'
+                            : 'Paid'}
+                        </Badge>
+                      </TableCell>
+                    </motion.tr>
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>

@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import {
+  getPortalDashboard,
   getPortalActivities,
   getPortalContracts,
   getPortalFiles,
@@ -12,6 +13,13 @@ import {
 import { queryKeys } from '@/lib/server-state/query-keys';
 
 const STALE_TIME = 1000 * 60 * 5;
+
+export const usePortalDashboardQuery = () =>
+  useQuery({
+    queryKey: queryKeys.dashboard,
+    queryFn: getPortalDashboard,
+    staleTime: STALE_TIME,
+  });
 
 export const usePortalInvoicesQuery = () =>
   useQuery({

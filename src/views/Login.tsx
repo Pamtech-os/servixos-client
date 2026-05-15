@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/contexts/AuthContext';
+import { ApiError } from '@/lib/api/client-api';
+import ForcePasswordChangeGate from '@/components/ForcePasswordChangeGate';
 import servixLogo from '@/assets/servix-logo.png';
 import ThemeToggle from '@/components/ThemeToggle';
 import ModernSpinner from '@/components/ModernSpinner';
@@ -19,6 +21,9 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [formError, setFormError] = useState('');
+  const [mustChangePasswordGateOpen, setMustChangePasswordGateOpen] = useState(false);
+  const [pendingNextPath, setPendingNextPath] = useState('/dashboard');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const { login } = useAuth();
@@ -36,11 +41,34 @@ const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+
+    setFormError('');
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    login(email);
-    setLoading(false);
-    router.push('/dashboard');
+
+    try {
+      const { mustChangePassword } = await login(email, password);
+      const nextPath =
+        typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('next') : null;
+      const safeNextPath = nextPath && nextPath.startsWith('/') ? nextPath : '/dashboard';
+
+      if (mustChangePassword) {
+        setPendingNextPath(safeNextPath);
+        setMustChangePasswordGateOpen(true);
+        return;
+      }
+
+      router.push(safeNextPath);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setFormError(error.message || 'Unable to sign in with those credentials.');
+      } else if (error instanceof Error) {
+        setFormError(error.message);
+      } else {
+        setFormError('Unable to sign in with those credentials.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -170,9 +198,19 @@ const Login = () => {
                 )}
               </Button>
             </motion.div>
+
+            {formError && <p className='text-center text-xs text-destructive'>{formError}</p>}
           </form>
         </div>
       </motion.div>
+
+      <ForcePasswordChangeGate
+        open={mustChangePasswordGateOpen}
+        userEmail={email}
+        onSuccess={() => {
+          router.replace(pendingNextPath || '/dashboard');
+        }}
+      />
     </div>
   );
 };

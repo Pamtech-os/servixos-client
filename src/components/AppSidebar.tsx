@@ -67,8 +67,8 @@ const AppSidebar = () => {
     });
   }, [router]);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.replace('/login');
   };
 
@@ -106,7 +106,7 @@ const AppSidebar = () => {
           {isDarkMode ? 'Light Mode' : 'Dark Mode'}
         </button>
         <button
-          onClick={handleLogout}
+          onClick={() => void handleLogout()}
           className='flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-500 transition-colors hover:bg-destructive/10'
         >
           <LogOut size={18} /> Sign Out

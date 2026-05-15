@@ -5,8 +5,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
 import AppHeader from '@/components/AppHeader';
+import ForcePasswordChangeGate from '@/components/ForcePasswordChangeGate';
 import { useAuth } from '@/contexts/AuthContext';
 import {
+  getPortalDashboard,
   getPortalActivities,
   getPortalContracts,
   getPortalFiles,
@@ -36,6 +38,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
   useEffect(() => {
     if (!isHydrated || !auth.isLoggedIn) return;
 
+    queryClient.prefetchQuery({ queryKey: queryKeys.dashboard, queryFn: getPortalDashboard });
     queryClient.prefetchQuery({ queryKey: queryKeys.invoices, queryFn: getPortalInvoices });
     queryClient.prefetchQuery({ queryKey: queryKeys.files, queryFn: getPortalFiles });
     queryClient.prefetchQuery({ queryKey: queryKeys.contracts, queryFn: getPortalContracts });
@@ -63,6 +66,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
           </main>
         </div>
       </div>
+      <ForcePasswordChangeGate open={auth.mustChangePassword} userEmail={auth.userEmail} />
     </div>
   );
 };
