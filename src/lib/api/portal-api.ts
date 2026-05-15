@@ -43,6 +43,17 @@ export interface PortalMessage {
   providerId: string;
 }
 
+export interface PortalConversation {
+  id: string;
+  providerId: string;
+  businessName: string;
+  supportEmail: string;
+  avatarInitials: string;
+  lastMessageContent: string;
+  lastMessageAt: Date | null;
+  clientUnreadCount: number;
+}
+
 export interface ServiceProvider {
   id: string;
   businessName: string;
@@ -157,6 +168,22 @@ const mapConversationsToProviders = (conversations: ClientConversation[]): Servi
   return Array.from(dedupe.values());
 };
 
+const mapConversation = (conversation: ClientConversation): PortalConversation => {
+  const lastMessageAt = conversation.lastMessageAt ? new Date(conversation.lastMessageAt) : null;
+
+  return {
+    id: conversation.id,
+    providerId: conversation.serviceProvider.id,
+    businessName: conversation.serviceProvider.businessName,
+    supportEmail: conversation.serviceProvider.supportEmail ?? '',
+    avatarInitials: conversation.serviceProvider.avatarInitials,
+    lastMessageContent: conversation.lastMessageContent,
+    lastMessageAt:
+      lastMessageAt && !Number.isNaN(lastMessageAt.getTime()) ? lastMessageAt : null,
+    clientUnreadCount: conversation.clientUnreadCount,
+  };
+};
+
 const mapConversationMessages = (
   providerId: string,
   messages: ClientConversationMessage[]
@@ -211,6 +238,11 @@ export const signPortalContract = async (
   signatureData: string
 ): Promise<{ id: string; status: 'signed'; signedAt: string }> => {
   return clientPortalApi.signContract(contractId, signatureData);
+};
+
+export const getPortalConversations = async (): Promise<PortalConversation[]> => {
+  const conversations = await clientPortalApi.listConversations();
+  return conversations.map(mapConversation);
 };
 
 export const getPortalMessages = async (): Promise<PortalMessage[]> => {

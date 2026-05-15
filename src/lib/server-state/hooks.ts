@@ -5,6 +5,7 @@ import {
   getPortalDashboard,
   getPortalActivities,
   getPortalContracts,
+  getPortalConversations,
   getPortalFiles,
   getPortalInvoices,
   getPortalMessages,
@@ -39,6 +40,13 @@ export const usePortalContractsQuery = () =>
   useQuery({
     queryKey: queryKeys.contracts,
     queryFn: getPortalContracts,
+    staleTime: STALE_TIME,
+  });
+
+export const usePortalConversationsQuery = () =>
+  useQuery({
+    queryKey: queryKeys.conversations,
+    queryFn: getPortalConversations,
     staleTime: STALE_TIME,
   });
 

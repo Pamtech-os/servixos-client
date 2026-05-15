@@ -1,19 +1,37 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Paperclip, ArrowLeft, MessageSquare } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import ModernSpinner from '@/components/ModernSpinner';
-import { usePortalMessagesQuery, useServiceProvidersQuery } from '@/lib/server-state/hooks';
+import { useAuth } from '@/contexts/AuthContext';
+import { usePortalConversationsQuery, usePortalMessagesQuery } from '@/lib/server-state/hooks';
 import { queryKeys } from '@/lib/server-state/query-keys';
-import { markConversationRead, type PortalMessage } from '@/lib/api/portal-api';
+import {
+  markConversationRead,
+  type PortalConversation,
+  type PortalMessage,
+} from '@/lib/api/portal-api';
+import {
+  connectClientMessagesSocket,
+  getClientMessagesSocket,
+  type ClientMessagesConversationUpdatedPayload,
+  type ClientMessagesMessageReadPayload,
+  type ClientMessagesNewMessagePayload,
+  type ClientMessagesTypingPayload,
+  type ClientMessagesSocket,
+  type ClientMessagesErrorPayload,
+} from '@/lib/realtime/client-messages-socket';
 import { useIsMobile } from '@/hooks/useMobile';
 
 const TABLET_BREAKPOINT = 1024;
+const TYPING_STOP_DELAY_MS = 1200;
 
 const formatTimestamp = (date: Date) => {
   const now = Date.now();
@@ -27,6 +45,12 @@ const formatTimestamp = (date: Date) => {
   return `${days}d ago`;
 };
 
+const parseDate = (value: string | undefined): Date | null => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const getInitials = (name: string) =>
   name
     .split(' ')
@@ -35,27 +59,292 @@ const getInitials = (name: string) =>
     .slice(0, 2)
     .toUpperCase();
 
+const appendMessage = (messages: PortalMessage[], next: PortalMessage): PortalMessage[] => {
+  if (messages.some((message) => message.id === next.id)) return messages;
+
+  return [...messages, next].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+};
+
 const PortalMessages = () => {
   const queryClient = useQueryClient();
+  const { auth } = useAuth();
+  const { data: conversations, isPending: isConversationsPending } = usePortalConversationsQuery();
   const { data: messages, isPending: isMessagesPending } = usePortalMessagesQuery();
-  const { data: providers, isPending: isProvidersPending } = useServiceProvidersQuery();
-  const messageRows = messages ?? [];
-  const providerRows = providers ?? [];
-  const isLoadingConversations = isProvidersPending && !providers;
+
+  const conversationRows = useMemo(() => conversations ?? [], [conversations]);
+  const messageRows = useMemo(() => messages ?? [], [messages]);
+  const isLoadingConversations = isConversationsPending && !conversations;
   const isLoadingMessages = isMessagesPending && !messages;
 
   const [input, setInput] = useState('');
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [isTablet, setIsTablet] = useState(false);
+  const [isSocketReady, setIsSocketReady] = useState(false);
+  const [isProviderTyping, setIsProviderTyping] = useState(false);
+
+  const activeProviderRef = useRef<string | null>(null);
+  const joinedProviderRef = useRef<string | null>(null);
+  const typingStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasTypingStartedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
-  const activeMessages = messageRows.filter((m) => m.providerId === activeProvider);
-  const activeProviderData = providerRows.find((provider) => provider.id === activeProvider);
+  const activeProviderExists = activeProvider
+    ? conversationRows.some((conversation) => conversation.providerId === activeProvider)
+    : false;
+  const resolvedActiveProvider = activeProviderExists ? activeProvider : null;
+  const activeMessages = messageRows.filter(
+    (message) => message.providerId === resolvedActiveProvider
+  );
+  const activeConversation =
+    conversationRows.find((conversation) => conversation.providerId === resolvedActiveProvider) ?? null;
+
+  const updateConversationPreview = useCallback(
+    (
+      providerId: string,
+      update: Partial<
+        Pick<PortalConversation, 'lastMessageContent' | 'lastMessageAt' | 'clientUnreadCount'>
+      >
+    ) => {
+      let didUpdate = false;
+
+      queryClient.setQueryData<PortalConversation[]>(queryKeys.conversations, (previous = []) => {
+        const index = previous.findIndex((conversation) => conversation.providerId === providerId);
+        if (index < 0) return previous;
+
+        didUpdate = true;
+        const next = [...previous];
+        next[index] = {
+          ...next[index],
+          ...update,
+        };
+        return next;
+      });
+
+      if (!didUpdate) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }).catch(() => undefined);
+      }
+    },
+    [queryClient]
+  );
+
+  const emitMarkRead = useCallback(
+    (providerId: string) => {
+      const socket = getClientMessagesSocket();
+      if (socket?.connected) {
+        socket.emit('mark_read', { providerId });
+      }
+
+      updateConversationPreview(providerId, { clientUnreadCount: 0 });
+      void markConversationRead(providerId).catch(() => undefined);
+    },
+    [updateConversationPreview]
+  );
+
+  const stopTyping = useCallback((providerIdOverride?: string) => {
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
+    }
+
+    const providerId = providerIdOverride ?? activeProviderRef.current;
+    if (!providerId || !hasTypingStartedRef.current) return;
+
+    const socket = getClientMessagesSocket();
+    if (socket?.connected) {
+      socket.emit('typing_stop', { providerId });
+    }
+
+    hasTypingStartedRef.current = false;
+  }, []);
+
+  const scheduleTypingStop = useCallback(() => {
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+    }
+
+    typingStopTimerRef.current = setTimeout(() => {
+      stopTyping();
+    }, TYPING_STOP_DELAY_MS);
+  }, [stopTyping]);
+
+  const handleSocketNewMessage = useCallback(
+    (payload: ClientMessagesNewMessagePayload) => {
+      const providerId = payload.providerId ?? payload.businessId ?? activeProviderRef.current;
+      if (!providerId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.messages }).catch(() => undefined);
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }).catch(() => undefined);
+        return;
+      }
+
+      const timestamp = parseDate(payload.createdAt) ?? new Date();
+      const newMessage: PortalMessage = {
+        id: payload.id,
+        sender: payload.sender,
+        senderName: payload.senderName || (payload.sender === 'client' ? 'You' : 'Support'),
+        content: payload.content ?? '',
+        timestamp,
+        providerId,
+      };
+
+      queryClient.setQueryData<PortalMessage[]>(queryKeys.messages, (previous = []) =>
+        appendMessage(previous, newMessage)
+      );
+
+      const shouldMarkRead =
+        payload.sender === 'business' && providerId === activeProviderRef.current && document.hasFocus();
+      const nextUnreadCount = shouldMarkRead ? 0 : undefined;
+
+      updateConversationPreview(providerId, {
+        lastMessageContent: newMessage.content,
+        lastMessageAt: timestamp,
+        ...(typeof nextUnreadCount === 'number' ? { clientUnreadCount: nextUnreadCount } : {}),
+      });
+
+      if (shouldMarkRead) {
+        emitMarkRead(providerId);
+      }
+    },
+    [emitMarkRead, queryClient, updateConversationPreview]
+  );
+
+  const handleSocketMessageRead = useCallback(
+    (payload: ClientMessagesMessageReadPayload) => {
+      updateConversationPreview(payload.providerId, { clientUnreadCount: 0 });
+    },
+    [updateConversationPreview]
+  );
+
+  const handleSocketConversationUpdated = useCallback(
+    (payload: ClientMessagesConversationUpdatedPayload) => {
+      const nextLastMessageAt = parseDate(payload.lastMessageAt);
+      let didUpdate = false;
+
+      queryClient.setQueryData<PortalConversation[]>(queryKeys.conversations, (previous = []) => {
+        const index = previous.findIndex((conversation) => conversation.id === payload.id);
+        if (index < 0) return previous;
+
+        didUpdate = true;
+        const next = [...previous];
+        next[index] = {
+          ...next[index],
+          lastMessageContent: payload.lastMessageContent,
+          lastMessageAt: nextLastMessageAt,
+          clientUnreadCount: payload.clientUnreadCount,
+        };
+        return next;
+      });
+
+      if (!didUpdate) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }).catch(() => undefined);
+      }
+    },
+    [queryClient]
+  );
+
+  const handleSocketTyping = useCallback(
+    (payload: ClientMessagesTypingPayload) => {
+      if (payload.clientId && payload.clientId === auth.clientId) return;
+
+      const providerId = payload.providerId ?? payload.businessId ?? activeProviderRef.current;
+      if (!providerId || providerId !== activeProviderRef.current) return;
+      setIsProviderTyping(Boolean(payload.isTyping));
+    },
+    [auth.clientId]
+  );
+
+  const handleSocketError = useCallback((payload: ClientMessagesErrorPayload) => {
+    const message = payload.message?.trim();
+    if (!message) return;
+    toast.error(message);
+  }, []);
+
+  useEffect(() => {
+    activeProviderRef.current = resolvedActiveProvider;
+  }, [resolvedActiveProvider]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let cleanup = () => undefined;
+
+    const bindSocketListeners = (socket: ClientMessagesSocket) => {
+      const handleConnect = () => setIsSocketReady(true);
+      const handleDisconnect = () => setIsSocketReady(false);
+
+      socket.on('connect', handleConnect);
+      socket.on('disconnect', handleDisconnect);
+      socket.on('new_message', handleSocketNewMessage);
+      socket.on('message_read', handleSocketMessageRead);
+      socket.on('conversation_updated', handleSocketConversationUpdated);
+      socket.on('typing', handleSocketTyping);
+      socket.on('error', handleSocketError);
+      setIsSocketReady(socket.connected);
+
+      cleanup = () => {
+        socket.off('connect', handleConnect);
+        socket.off('disconnect', handleDisconnect);
+        socket.off('new_message', handleSocketNewMessage);
+        socket.off('message_read', handleSocketMessageRead);
+        socket.off('conversation_updated', handleSocketConversationUpdated);
+        socket.off('typing', handleSocketTyping);
+        socket.off('error', handleSocketError);
+      };
+    };
+
+    const attach = async () => {
+      const existing = getClientMessagesSocket();
+      if (existing) {
+        bindSocketListeners(existing);
+        return;
+      }
+
+      const connected = await connectClientMessagesSocket();
+      if (!isMounted || !connected) return;
+      bindSocketListeners(connected);
+    };
+
+    void attach();
+
+    return () => {
+      isMounted = false;
+      cleanup();
+    };
+  }, [
+    handleSocketConversationUpdated,
+    handleSocketError,
+    handleSocketMessageRead,
+    handleSocketNewMessage,
+    handleSocketTyping,
+  ]);
+
+  useEffect(() => {
+    if (!isSocketReady) return;
+
+    const socket = getClientMessagesSocket();
+    if (!socket?.connected) return;
+
+    const previousProvider = joinedProviderRef.current;
+    if (previousProvider && previousProvider !== resolvedActiveProvider) {
+      socket.emit('leave_conversation', { providerId: previousProvider });
+      stopTyping(previousProvider);
+    }
+
+    if (!resolvedActiveProvider) {
+      joinedProviderRef.current = null;
+      return;
+    }
+
+    if (joinedProviderRef.current !== resolvedActiveProvider) {
+      socket.emit('join_conversation', { providerId: resolvedActiveProvider });
+      joinedProviderRef.current = resolvedActiveProvider;
+    }
+
+    emitMarkRead(resolvedActiveProvider);
+  }, [emitMarkRead, isSocketReady, resolvedActiveProvider, stopTyping]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeMessages.length]);
+  }, [activeMessages.length, isProviderTyping]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(`(max-width: ${TABLET_BREAKPOINT}px)`);
@@ -68,34 +357,74 @@ const PortalMessages = () => {
     return () => mediaQuery.removeEventListener('change', onChange);
   }, []);
 
-  const handleSend = () => {
-    if (!input.trim() || !activeProvider) return;
+  useEffect(() => {
+    if (!resolvedActiveProvider) return;
 
-    const newMsg: PortalMessage = {
-      id: `pm-${Date.now()}`,
-      sender: 'client',
-      senderName: 'You',
-      content: input.trim(),
-      timestamp: new Date(),
-      providerId: activeProvider,
+    const onFocus = () => emitMarkRead(resolvedActiveProvider);
+    const onVisibilityChange = () => {
+      if (!document.hidden) emitMarkRead(resolvedActiveProvider);
     };
 
-    queryClient.setQueryData<PortalMessage[]>(queryKeys.messages, (previous = []) => [
-      ...previous,
-      newMsg,
-    ]);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [emitMarkRead, resolvedActiveProvider]);
 
+  useEffect(
+    () => () => {
+      const joinedProviderId = joinedProviderRef.current;
+      const socket = getClientMessagesSocket();
+
+      stopTyping(joinedProviderId ?? undefined);
+      if (joinedProviderId && socket?.connected) {
+        socket.emit('leave_conversation', { providerId: joinedProviderId });
+      }
+    },
+    [stopTyping]
+  );
+
+  const handleSend = () => {
+    const content = input.trim();
+    if (!content || !resolvedActiveProvider) return;
+
+    const socket = getClientMessagesSocket();
+    if (!socket?.connected) {
+      toast.error('Messaging is reconnecting. Please try again in a moment.');
+      return;
+    }
+
+    socket.emit('send_message', { providerId: resolvedActiveProvider, content });
+    stopTyping(resolvedActiveProvider);
     setInput('');
   };
 
-  const getLastMessage = (providerId: string) => {
-    const providerMsgs = messageRows.filter((message) => message.providerId === providerId);
-    return providerMsgs[providerMsgs.length - 1];
+  const handleInputChange = (value: string) => {
+    setInput(value);
+
+    if (!resolvedActiveProvider) return;
+
+    const socket = getClientMessagesSocket();
+    if (!socket?.connected) return;
+
+    if (!value.trim()) {
+      stopTyping(resolvedActiveProvider);
+      return;
+    }
+
+    if (!hasTypingStartedRef.current) {
+      socket.emit('typing_start', { providerId: resolvedActiveProvider });
+      hasTypingStartedRef.current = true;
+    }
+
+    scheduleTypingStop();
   };
 
   const isCompactLayout = isMobile || isTablet;
-  const showList = !activeProvider || !isCompactLayout;
-  const showChat = Boolean(activeProvider);
+  const showList = !resolvedActiveProvider || !isCompactLayout;
+  const showChat = Boolean(resolvedActiveProvider);
 
   return (
     <div className='flex h-[calc(100dvh-9.5rem)] min-h-[28rem] flex-col space-y-3 sm:space-y-4 lg:h-[calc(100dvh-8.5rem)]'>
@@ -130,23 +459,22 @@ const PortalMessages = () => {
                       <p className='text-sm'>Loading conversations...</p>
                     </div>
                   </div>
-                ) : providerRows.length === 0 ? (
+                ) : conversationRows.length === 0 ? (
                   <div className='flex h-full min-h-52 items-center justify-center p-6 text-center'>
                     <p className='text-sm text-muted-foreground'>No conversations yet.</p>
                   </div>
                 ) : (
-                  providerRows.map((provider, i) => {
-                    const lastMsg = getLastMessage(provider.id);
-                    const isActive = activeProvider === provider.id;
+                  conversationRows.map((conversation, i) => {
+                        const isActive = resolvedActiveProvider === conversation.providerId;
                     return (
                       <motion.button
-                        key={provider.id}
+                        key={conversation.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.05, duration: 0.3 }}
                         onClick={() => {
-                          setActiveProvider(provider.id);
-                          void markConversationRead(provider.id);
+                          setActiveProvider(conversation.providerId);
+                          setIsProviderTyping(false);
                         }}
                         className={`w-full border-b border-border/50 p-3.5 text-left transition-colors hover:bg-muted/50 flex items-center gap-3 ${
                           isActive ? 'border-l-2 border-l-primary bg-primary/5' : ''
@@ -154,22 +482,30 @@ const PortalMessages = () => {
                       >
                         <Avatar className='h-10 w-10 shrink-0'>
                           <AvatarFallback className='bg-primary/10 text-xs font-medium text-primary'>
-                            {getInitials(provider.businessName)}
+                            {conversation.avatarInitials || getInitials(conversation.businessName)}
                           </AvatarFallback>
                         </Avatar>
                         <div className='min-w-0 flex-1'>
-                          <div className='flex items-center justify-between'>
-                            <span className='truncate text-sm font-semibold'>{provider.businessName}</span>
-                            {lastMsg && (
-                              <span className='ml-2 shrink-0 text-[10px] text-muted-foreground'>
-                                {formatTimestamp(lastMsg.timestamp)}
-                              </span>
-                            )}
+                          <div className='flex items-center justify-between gap-2'>
+                            <span className='truncate text-sm font-semibold'>
+                              {conversation.businessName}
+                            </span>
+                            <div className='flex items-center gap-1.5'>
+                              {conversation.clientUnreadCount > 0 && (
+                                <Badge className='h-5 min-w-5 rounded-full px-1.5 text-[10px]'>
+                                  {conversation.clientUnreadCount}
+                                </Badge>
+                              )}
+                              {conversation.lastMessageAt && (
+                                <span className='shrink-0 text-[10px] text-muted-foreground'>
+                                  {formatTimestamp(conversation.lastMessageAt)}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          {lastMsg && (
+                          {conversation.lastMessageContent && (
                             <p className='mt-0.5 truncate text-xs text-muted-foreground'>
-                              {lastMsg.sender === 'client' ? 'You: ' : ''}
-                              {lastMsg.content}
+                              {conversation.lastMessageContent}
                             </p>
                           )}
                         </div>
@@ -185,7 +521,7 @@ const PortalMessages = () => {
         <AnimatePresence mode='wait'>
           {showChat ? (
             <motion.div
-              key={activeProvider}
+              key={resolvedActiveProvider}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
@@ -196,7 +532,10 @@ const PortalMessages = () => {
                   <Button
                     variant='ghost'
                     size='icon'
-                    onClick={() => setActiveProvider(null)}
+                    onClick={() => {
+                      setActiveProvider(null);
+                      setIsProviderTyping(false);
+                    }}
                     className='shrink-0'
                   >
                     <ArrowLeft size={18} />
@@ -204,15 +543,17 @@ const PortalMessages = () => {
                 )}
                 <Avatar className='h-8 w-8 shrink-0'>
                   <AvatarFallback className='bg-primary/10 text-xs text-primary'>
-                    {activeProviderData ? getInitials(activeProviderData.businessName) : '??'}
+                    {activeConversation
+                      ? activeConversation.avatarInitials || getInitials(activeConversation.businessName)
+                      : '??'}
                   </AvatarFallback>
                 </Avatar>
                 <div className='min-w-0'>
                   <p className='truncate text-sm font-semibold'>
-                    {activeProviderData?.businessName} Team
+                    {activeConversation?.businessName} Team
                   </p>
                   <p className='truncate text-[11px] text-muted-foreground'>
-                    {activeProviderData?.supportEmail}
+                    {activeConversation?.supportEmail}
                   </p>
                 </div>
               </div>
@@ -232,11 +573,11 @@ const PortalMessages = () => {
                     </p>
                   </div>
                 ) : (
-                  activeMessages.map((msg, i) => {
-                    const isClient = msg.sender === 'client';
+                  activeMessages.map((message, i) => {
+                    const isClient = message.sender === 'client';
                     return (
                       <motion.div
-                        key={msg.id}
+                        key={message.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.03, duration: 0.3 }}
@@ -250,7 +591,12 @@ const PortalMessages = () => {
                                 : 'bg-secondary/10 text-xs text-secondary'
                             }
                           >
-                            {isClient ? 'YO' : getInitials(activeProviderData?.businessName || '?')}
+                            {isClient
+                              ? 'YO'
+                              : activeConversation
+                              ? activeConversation.avatarInitials ||
+                                getInitials(activeConversation.businessName)
+                              : '??'}
                           </AvatarFallback>
                         </Avatar>
                         <div
@@ -259,9 +605,9 @@ const PortalMessages = () => {
                           }`}
                         >
                           <div className={`flex items-center gap-2 ${isClient ? 'justify-end' : ''}`}>
-                            <span className='text-xs font-medium'>{msg.senderName}</span>
+                            <span className='text-xs font-medium'>{message.senderName}</span>
                             <span className='text-[10px] text-muted-foreground'>
-                              {formatTimestamp(msg.timestamp)}
+                              {formatTimestamp(message.timestamp)}
                             </span>
                           </div>
                           <div
@@ -271,12 +617,17 @@ const PortalMessages = () => {
                                 : 'rounded-bl-md bg-muted text-foreground'
                             }`}
                           >
-                            {msg.content}
+                            {message.content}
                           </div>
                         </div>
                       </motion.div>
                     );
                   })
+                )}
+                {isProviderTyping && (
+                  <div className='text-xs text-muted-foreground'>
+                    {activeConversation?.businessName || 'Provider'} is typing...
+                  </div>
                 )}
                 <div ref={bottomRef} />
               </div>
@@ -287,7 +638,7 @@ const PortalMessages = () => {
                 </Button>
                 <Input
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => handleInputChange(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                   placeholder='Type a message...'
                   className='flex-1'
@@ -306,7 +657,7 @@ const PortalMessages = () => {
           ) : null}
         </AnimatePresence>
 
-        {!activeProvider && !isCompactLayout && providerRows.length > 0 && (
+        {!resolvedActiveProvider && !isCompactLayout && conversationRows.length > 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
