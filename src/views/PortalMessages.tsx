@@ -7,9 +7,10 @@ import { Send, Paperclip, ArrowLeft, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import ModernSpinner from '@/components/ModernSpinner';
 import { usePortalMessagesQuery, useServiceProvidersQuery } from '@/lib/server-state/hooks';
 import { queryKeys } from '@/lib/server-state/query-keys';
-import type { PortalMessage } from '@/lib/portal-mock-data';
+import { markConversationRead, type PortalMessage } from '@/lib/api/portal-api';
 import { useIsMobile } from '@/hooks/useMobile';
 
 const TABLET_BREAKPOINT = 1024;
@@ -36,8 +37,12 @@ const getInitials = (name: string) =>
 
 const PortalMessages = () => {
   const queryClient = useQueryClient();
-  const { data: messages = [] } = usePortalMessagesQuery();
-  const { data: providers = [] } = useServiceProvidersQuery();
+  const { data: messages, isPending: isMessagesPending } = usePortalMessagesQuery();
+  const { data: providers, isPending: isProvidersPending } = useServiceProvidersQuery();
+  const messageRows = messages ?? [];
+  const providerRows = providers ?? [];
+  const isLoadingConversations = isProvidersPending && !providers;
+  const isLoadingMessages = isMessagesPending && !messages;
 
   const [input, setInput] = useState('');
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
@@ -45,8 +50,8 @@ const PortalMessages = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
-  const activeMessages = messages.filter((m) => m.providerId === activeProvider);
-  const activeProviderData = providers.find((provider) => provider.id === activeProvider);
+  const activeMessages = messageRows.filter((m) => m.providerId === activeProvider);
+  const activeProviderData = providerRows.find((provider) => provider.id === activeProvider);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -84,7 +89,7 @@ const PortalMessages = () => {
   };
 
   const getLastMessage = (providerId: string) => {
-    const providerMsgs = messages.filter((message) => message.providerId === providerId);
+    const providerMsgs = messageRows.filter((message) => message.providerId === providerId);
     return providerMsgs[providerMsgs.length - 1];
   };
 
@@ -118,44 +123,60 @@ const PortalMessages = () => {
                 <h2 className='text-sm font-semibold text-muted-foreground'>Conversations</h2>
               </div>
               <div className='flex-1 overflow-y-auto'>
-                {providers.map((provider, i) => {
-                  const lastMsg = getLastMessage(provider.id);
-                  const isActive = activeProvider === provider.id;
-                  return (
-                    <motion.button
-                      key={provider.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.05, duration: 0.3 }}
-                      onClick={() => setActiveProvider(provider.id)}
-                      className={`w-full border-b border-border/50 p-3.5 text-left transition-colors hover:bg-muted/50 flex items-center gap-3 ${
-                        isActive ? 'border-l-2 border-l-primary bg-primary/5' : ''
-                      }`}
-                    >
-                      <Avatar className='h-10 w-10 shrink-0'>
-                        <AvatarFallback className='bg-primary/10 text-xs font-medium text-primary'>
-                          {getInitials(provider.businessName)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className='min-w-0 flex-1'>
-                        <div className='flex items-center justify-between'>
-                          <span className='truncate text-sm font-semibold'>{provider.businessName}</span>
+                {isLoadingConversations ? (
+                  <div className='flex h-full min-h-52 items-center justify-center p-6 text-center'>
+                    <div className='flex items-center gap-2 text-muted-foreground'>
+                      <ModernSpinner size='sm' color='primary' />
+                      <p className='text-sm'>Loading conversations...</p>
+                    </div>
+                  </div>
+                ) : providerRows.length === 0 ? (
+                  <div className='flex h-full min-h-52 items-center justify-center p-6 text-center'>
+                    <p className='text-sm text-muted-foreground'>No conversations yet.</p>
+                  </div>
+                ) : (
+                  providerRows.map((provider, i) => {
+                    const lastMsg = getLastMessage(provider.id);
+                    const isActive = activeProvider === provider.id;
+                    return (
+                      <motion.button
+                        key={provider.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.05, duration: 0.3 }}
+                        onClick={() => {
+                          setActiveProvider(provider.id);
+                          void markConversationRead(provider.id);
+                        }}
+                        className={`w-full border-b border-border/50 p-3.5 text-left transition-colors hover:bg-muted/50 flex items-center gap-3 ${
+                          isActive ? 'border-l-2 border-l-primary bg-primary/5' : ''
+                        }`}
+                      >
+                        <Avatar className='h-10 w-10 shrink-0'>
+                          <AvatarFallback className='bg-primary/10 text-xs font-medium text-primary'>
+                            {getInitials(provider.businessName)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className='min-w-0 flex-1'>
+                          <div className='flex items-center justify-between'>
+                            <span className='truncate text-sm font-semibold'>{provider.businessName}</span>
+                            {lastMsg && (
+                              <span className='ml-2 shrink-0 text-[10px] text-muted-foreground'>
+                                {formatTimestamp(lastMsg.timestamp)}
+                              </span>
+                            )}
+                          </div>
                           {lastMsg && (
-                            <span className='ml-2 shrink-0 text-[10px] text-muted-foreground'>
-                              {formatTimestamp(lastMsg.timestamp)}
-                            </span>
+                            <p className='mt-0.5 truncate text-xs text-muted-foreground'>
+                              {lastMsg.sender === 'client' ? 'You: ' : ''}
+                              {lastMsg.content}
+                            </p>
                           )}
                         </div>
-                        {lastMsg && (
-                          <p className='mt-0.5 truncate text-xs text-muted-foreground'>
-                            {lastMsg.sender === 'client' ? 'You: ' : ''}
-                            {lastMsg.content}
-                          </p>
-                        )}
-                      </div>
-                    </motion.button>
-                  );
-                })}
+                      </motion.button>
+                    );
+                  })
+                )}
               </div>
             </motion.div>
           )}
@@ -197,51 +218,66 @@ const PortalMessages = () => {
               </div>
 
               <div className='flex-1 space-y-4 overflow-y-auto p-3 sm:p-4'>
-                {activeMessages.map((msg, i) => {
-                  const isClient = msg.sender === 'client';
-                  return (
-                    <motion.div
-                      key={msg.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.03, duration: 0.3 }}
-                      className={`flex gap-3 ${isClient ? 'flex-row-reverse' : ''}`}
-                    >
-                      <Avatar className='h-8 w-8 shrink-0'>
-                        <AvatarFallback
-                          className={
-                            isClient
-                              ? 'bg-primary/10 text-xs text-primary'
-                              : 'bg-secondary/10 text-xs text-secondary'
-                          }
-                        >
-                          {isClient ? 'YO' : getInitials(activeProviderData?.businessName || '?')}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div
-                        className={`max-w-[82%] space-y-1 sm:max-w-[75%] ${
-                          isClient ? 'items-end text-right' : ''
-                        }`}
+                {isLoadingMessages ? (
+                  <div className='flex h-full min-h-44 items-center justify-center text-center'>
+                    <div className='flex items-center gap-2 text-muted-foreground'>
+                      <ModernSpinner size='sm' color='primary' />
+                      <p className='text-sm'>Loading messages...</p>
+                    </div>
+                  </div>
+                ) : activeMessages.length === 0 ? (
+                  <div className='flex h-full min-h-44 items-center justify-center text-center'>
+                    <p className='text-sm text-muted-foreground'>
+                      No messages in this conversation yet.
+                    </p>
+                  </div>
+                ) : (
+                  activeMessages.map((msg, i) => {
+                    const isClient = msg.sender === 'client';
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.03, duration: 0.3 }}
+                        className={`flex gap-3 ${isClient ? 'flex-row-reverse' : ''}`}
                       >
-                        <div className={`flex items-center gap-2 ${isClient ? 'justify-end' : ''}`}>
-                          <span className='text-xs font-medium'>{msg.senderName}</span>
-                          <span className='text-[10px] text-muted-foreground'>
-                            {formatTimestamp(msg.timestamp)}
-                          </span>
-                        </div>
+                        <Avatar className='h-8 w-8 shrink-0'>
+                          <AvatarFallback
+                            className={
+                              isClient
+                                ? 'bg-primary/10 text-xs text-primary'
+                                : 'bg-secondary/10 text-xs text-secondary'
+                            }
+                          >
+                            {isClient ? 'YO' : getInitials(activeProviderData?.businessName || '?')}
+                          </AvatarFallback>
+                        </Avatar>
                         <div
-                          className={`inline-block rounded-2xl px-4 py-2.5 text-sm ${
-                            isClient
-                              ? 'rounded-br-md bg-primary text-primary-foreground'
-                              : 'rounded-bl-md bg-muted text-foreground'
+                          className={`max-w-[82%] space-y-1 sm:max-w-[75%] ${
+                            isClient ? 'items-end text-right' : ''
                           }`}
                         >
-                          {msg.content}
+                          <div className={`flex items-center gap-2 ${isClient ? 'justify-end' : ''}`}>
+                            <span className='text-xs font-medium'>{msg.senderName}</span>
+                            <span className='text-[10px] text-muted-foreground'>
+                              {formatTimestamp(msg.timestamp)}
+                            </span>
+                          </div>
+                          <div
+                            className={`inline-block rounded-2xl px-4 py-2.5 text-sm ${
+                              isClient
+                                ? 'rounded-br-md bg-primary text-primary-foreground'
+                                : 'rounded-bl-md bg-muted text-foreground'
+                            }`}
+                          >
+                            {msg.content}
+                          </div>
                         </div>
-                      </div>
-                    </motion.div>
-                  );
-                })}
+                      </motion.div>
+                    );
+                  })
+                )}
                 <div ref={bottomRef} />
               </div>
 
@@ -270,7 +306,7 @@ const PortalMessages = () => {
           ) : null}
         </AnimatePresence>
 
-        {!activeProvider && !isCompactLayout && (
+        {!activeProvider && !isCompactLayout && providerRows.length > 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
