@@ -6,7 +6,11 @@ import {
   type ClientConversationMessage,
   type ClientFile,
   type ClientInvoice,
+  type ClientInvoiceFilter,
 } from '@/lib/api/client-api';
+
+export type { ClientInvoiceFilter } from '@/lib/api/client-api';
+export { SortOrder, ClientInvoiceSortBy } from '@/lib/api/client-api';
 
 export interface PortalInvoice {
   id: string;
@@ -209,8 +213,8 @@ export const getPortalDashboard = async (): Promise<PortalDashboardData> => {
   };
 };
 
-export const getPortalInvoices = async (): Promise<PortalInvoice[]> => {
-  const invoices = await clientPortalApi.listInvoices();
+export const getPortalInvoices = async (filter?: ClientInvoiceFilter): Promise<PortalInvoice[]> => {
+  const invoices = await clientPortalApi.listInvoices(filter);
   return invoices.map(mapInvoice);
 };
 

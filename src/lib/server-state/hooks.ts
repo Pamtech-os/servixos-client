@@ -10,6 +10,7 @@ import {
   getPortalInvoices,
   getPortalMessages,
   getServiceProviders,
+  type ClientInvoiceFilter,
 } from '@/lib/api/portal-api';
 import { queryKeys } from '@/lib/server-state/query-keys';
 
@@ -22,12 +23,18 @@ export const usePortalDashboardQuery = () =>
     staleTime: STALE_TIME,
   });
 
-export const usePortalInvoicesQuery = () =>
-  useQuery({
-    queryKey: queryKeys.invoices,
-    queryFn: getPortalInvoices,
+export const usePortalInvoicesQuery = (filter?: ClientInvoiceFilter) => {
+  // Normalize so an all-undefined filter hits the same cache slot as no filter,
+  // allowing AppLayout's prefetch (base key) to be reused on initial load.
+  const activeFilter =
+    filter && Object.values(filter).some((v) => v !== undefined) ? filter : undefined;
+
+  return useQuery({
+    queryKey: activeFilter ? ([...queryKeys.invoices, activeFilter] as const) : queryKeys.invoices,
+    queryFn: () => getPortalInvoices(activeFilter),
     staleTime: STALE_TIME,
   });
+};
 
 export const usePortalFilesQuery = () =>
   useQuery({

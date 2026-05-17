@@ -68,12 +68,18 @@ export interface ClientMessagesErrorPayload {
   code?: string;
 }
 
+export interface ClientMessagesProviderStatusPayload {
+  providerId: string;
+  isOnline: boolean;
+}
+
 type ServerToClientEvents = {
   connected: (payload: { clientId: string; message: string }) => void;
   new_message: (payload: ClientMessagesNewMessagePayload) => void;
   message_read: (payload: ClientMessagesMessageReadPayload) => void;
   conversation_updated: (payload: ClientMessagesConversationUpdatedPayload) => void;
   typing: (payload: ClientMessagesTypingPayload) => void;
+  provider_status: (payload: ClientMessagesProviderStatusPayload) => void;
   error: (payload: ClientMessagesErrorPayload) => void;
 };
 

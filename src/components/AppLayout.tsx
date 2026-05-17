@@ -44,7 +44,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     if (!isHydrated || !auth.isLoggedIn) return;
 
     queryClient.prefetchQuery({ queryKey: queryKeys.dashboard, queryFn: getPortalDashboard });
-    queryClient.prefetchQuery({ queryKey: queryKeys.invoices, queryFn: getPortalInvoices });
+    queryClient.prefetchQuery({ queryKey: queryKeys.invoices, queryFn: () => getPortalInvoices() });
     queryClient.prefetchQuery({ queryKey: queryKeys.files, queryFn: getPortalFiles });
     queryClient.prefetchQuery({ queryKey: queryKeys.contracts, queryFn: getPortalContracts });
     queryClient.prefetchQuery({ queryKey: queryKeys.conversations, queryFn: getPortalConversations });

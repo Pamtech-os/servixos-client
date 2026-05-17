@@ -27,6 +27,7 @@ import {
   type ClientMessagesTypingPayload,
   type ClientMessagesSocket,
   type ClientMessagesErrorPayload,
+  type ClientMessagesProviderStatusPayload,
 } from '@/lib/realtime/client-messages-socket';
 import { useIsMobile } from '@/hooks/useMobile';
 
@@ -81,6 +82,7 @@ const PortalMessages = () => {
   const [isTablet, setIsTablet] = useState(false);
   const [isSocketReady, setIsSocketReady] = useState(false);
   const [isProviderTyping, setIsProviderTyping] = useState(false);
+  const [onlineProviders, setOnlineProviders] = useState<Set<string>>(new Set());
 
   const activeProviderRef = useRef<string | null>(null);
   const joinedProviderRef = useRef<string | null>(null);
@@ -93,8 +95,12 @@ const PortalMessages = () => {
     ? conversationRows.some((conversation) => conversation.providerId === activeProvider)
     : false;
   const resolvedActiveProvider = activeProviderExists ? activeProvider : null;
-  const activeMessages = messageRows.filter(
-    (message) => message.providerId === resolvedActiveProvider
+  const activeMessages = useMemo(
+    () =>
+      messageRows
+        .filter((message) => message.providerId === resolvedActiveProvider)
+        .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+    [messageRows, resolvedActiveProvider]
   );
   const activeConversation =
     conversationRows.find((conversation) => conversation.providerId === resolvedActiveProvider) ?? null;
@@ -170,7 +176,27 @@ const PortalMessages = () => {
 
   const handleSocketNewMessage = useCallback(
     (payload: ClientMessagesNewMessagePayload) => {
-      const providerId = payload.providerId ?? payload.businessId ?? activeProviderRef.current;
+      const rawId = payload.providerId ?? payload.businessId;
+
+      // If the raw ID from the payload doesn't map to a known conversation (e.g. the
+      // server sent a businessId that differs from serviceProvider.id), look it up in
+      // the cache so we always store the message under the correct providerId.
+      const resolveProviderId = (): string | null => {
+        const cached = queryClient.getQueryData<PortalConversation[]>(queryKeys.conversations);
+
+        if (rawId) {
+          const byProviderId = cached?.find((c) => c.providerId === rawId);
+          if (byProviderId) return byProviderId.providerId;
+
+          // businessId might equal conversation.id rather than providerId
+          const byConvId = cached?.find((c) => c.id === rawId);
+          if (byConvId) return byConvId.providerId;
+        }
+
+        return activeProviderRef.current;
+      };
+
+      const providerId = resolveProviderId();
       if (!providerId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.messages }).catch(() => undefined);
         queryClient.invalidateQueries({ queryKey: queryKeys.conversations }).catch(() => undefined);
@@ -190,6 +216,11 @@ const PortalMessages = () => {
       queryClient.setQueryData<PortalMessage[]>(queryKeys.messages, (previous = []) =>
         appendMessage(previous, newMessage)
       );
+
+      // Fallback refetch: covers cases where the direct setQueryData doesn't trigger
+      // a re-render (e.g. socket callbacks running outside React's flush cycle) or
+      // where the server emits conversation_updated without new_message.
+      queryClient.invalidateQueries({ queryKey: queryKeys.messages }).catch(() => undefined);
 
       const shouldMarkRead =
         payload.sender === 'business' && providerId === activeProviderRef.current && document.hasFocus();
@@ -238,6 +269,10 @@ const PortalMessages = () => {
       if (!didUpdate) {
         queryClient.invalidateQueries({ queryKey: queryKeys.conversations }).catch(() => undefined);
       }
+
+      // Always sync the message thread — the server may emit conversation_updated
+      // without a corresponding new_message event.
+      queryClient.invalidateQueries({ queryKey: queryKeys.messages }).catch(() => undefined);
     },
     [queryClient]
   );
@@ -252,6 +287,18 @@ const PortalMessages = () => {
     },
     [auth.clientId]
   );
+
+  const handleSocketProviderStatus = useCallback((payload: ClientMessagesProviderStatusPayload) => {
+    setOnlineProviders((prev) => {
+      const next = new Set(prev);
+      if (payload.isOnline) {
+        next.add(payload.providerId);
+      } else {
+        next.delete(payload.providerId);
+      }
+      return next;
+    });
+  }, []);
 
   const handleSocketError = useCallback((payload: ClientMessagesErrorPayload) => {
     const message = payload.message?.trim();
@@ -277,6 +324,7 @@ const PortalMessages = () => {
       socket.on('message_read', handleSocketMessageRead);
       socket.on('conversation_updated', handleSocketConversationUpdated);
       socket.on('typing', handleSocketTyping);
+      socket.on('provider_status', handleSocketProviderStatus);
       socket.on('error', handleSocketError);
       setIsSocketReady(socket.connected);
 
@@ -287,6 +335,7 @@ const PortalMessages = () => {
         socket.off('message_read', handleSocketMessageRead);
         socket.off('conversation_updated', handleSocketConversationUpdated);
         socket.off('typing', handleSocketTyping);
+        socket.off('provider_status', handleSocketProviderStatus);
         socket.off('error', handleSocketError);
       };
     };
@@ -314,6 +363,7 @@ const PortalMessages = () => {
     handleSocketError,
     handleSocketMessageRead,
     handleSocketNewMessage,
+    handleSocketProviderStatus,
     handleSocketTyping,
   ]);
 
@@ -480,11 +530,18 @@ const PortalMessages = () => {
                           isActive ? 'border-l-2 border-l-primary bg-primary/5' : ''
                         }`}
                       >
-                        <Avatar className='h-10 w-10 shrink-0'>
-                          <AvatarFallback className='bg-primary/10 text-xs font-medium text-primary'>
-                            {conversation.avatarInitials || getInitials(conversation.businessName)}
-                          </AvatarFallback>
-                        </Avatar>
+                        <div className='relative shrink-0'>
+                          <Avatar className='h-10 w-10'>
+                            <AvatarFallback className='bg-primary/10 text-xs font-medium text-primary'>
+                              {conversation.avatarInitials || getInitials(conversation.businessName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span
+                            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-card ${
+                              onlineProviders.has(conversation.providerId) ? 'bg-green-500' : 'bg-gray-400'
+                            }`}
+                          />
+                        </div>
                         <div className='min-w-0 flex-1'>
                           <div className='flex items-center justify-between gap-2'>
                             <span className='truncate text-sm font-semibold'>
@@ -552,9 +609,20 @@ const PortalMessages = () => {
                   <p className='truncate text-sm font-semibold'>
                     {activeConversation?.businessName} Team
                   </p>
-                  <p className='truncate text-[11px] text-muted-foreground'>
-                    {activeConversation?.supportEmail}
-                  </p>
+                  <div className='flex items-center gap-1.5'>
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${
+                        activeConversation && onlineProviders.has(activeConversation.providerId)
+                          ? 'bg-green-500'
+                          : 'bg-gray-400'
+                      }`}
+                    />
+                    <p className='truncate text-[11px] text-muted-foreground'>
+                      {activeConversation && onlineProviders.has(activeConversation.providerId)
+                        ? 'Online'
+                        : 'Offline'}
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -624,11 +692,37 @@ const PortalMessages = () => {
                     );
                   })
                 )}
-                {isProviderTyping && (
-                  <div className='text-xs text-muted-foreground'>
-                    {activeConversation?.businessName || 'Provider'} is typing...
-                  </div>
-                )}
+                <AnimatePresence>
+                  {isProviderTyping && (
+                    <motion.div
+                      key='typing-indicator'
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.2 }}
+                      className='flex gap-3'
+                    >
+                      <Avatar className='h-8 w-8 shrink-0'>
+                        <AvatarFallback className='bg-secondary/10 text-xs text-secondary'>
+                          {activeConversation
+                            ? activeConversation.avatarInitials ||
+                              getInitials(activeConversation.businessName)
+                            : '??'}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className='space-y-1'>
+                        <span className='text-xs font-medium'>
+                          {activeConversation?.businessName ?? 'Provider'}
+                        </span>
+                        <div className='inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-muted px-4 py-3'>
+                          <span className='h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.3s]' />
+                          <span className='h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.15s]' />
+                          <span className='h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60' />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <div ref={bottomRef} />
               </div>
 
