@@ -7,4 +7,6 @@ export const queryKeys = {
   messages: ['portal', 'messages'] as const,
   providers: ['portal', 'providers'] as const,
   activities: ['portal', 'activities'] as const,
+  jobs: ['portal', 'jobs'] as const,
+  jobReview: (jobId: string) => ['portal', 'jobs', jobId, 'review'] as const,
 };
