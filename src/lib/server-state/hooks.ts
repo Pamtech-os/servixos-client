@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getPortalDashboard,
   getPortalActivities,
@@ -8,8 +8,11 @@ import {
   getPortalConversations,
   getPortalFiles,
   getPortalInvoices,
+  getPortalJobs,
+  getPortalJobReview,
   getPortalMessages,
   getServiceProviders,
+  submitPortalJobReview,
   type ClientInvoiceFilter,
 } from '@/lib/api/portal-api';
 import { queryKeys } from '@/lib/server-state/query-keys';
@@ -77,3 +80,36 @@ export const usePortalActivitiesQuery = () =>
     queryFn: getPortalActivities,
     staleTime: STALE_TIME,
   });
+
+export const usePortalJobsQuery = () =>
+  useQuery({
+    queryKey: queryKeys.jobs,
+    queryFn: getPortalJobs,
+    staleTime: STALE_TIME,
+  });
+
+export const usePortalJobReviewQuery = (jobId: string | null) =>
+  useQuery({
+    queryKey: queryKeys.jobReview(jobId ?? ''),
+    queryFn: () => getPortalJobReview(jobId!),
+    staleTime: STALE_TIME,
+    enabled: !!jobId,
+  });
+
+export const useSubmitPortalJobReviewMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      rating,
+      comment,
+    }: {
+      jobId: string;
+      rating: 1 | 2 | 3 | 4 | 5;
+      comment?: string;
+    }) => submitPortalJobReview(jobId, { rating, comment }),
+    onSuccess: (data, { jobId }) => {
+      queryClient.setQueryData(queryKeys.jobReview(jobId), data);
+    },
+  });
+};

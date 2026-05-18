@@ -525,7 +525,32 @@ export interface ClientInvoice {
   currency: string;
 }
 
-export type ClientJob = Record<string, unknown>;
+export interface ClientJob {
+  _id?: string;
+  id?: string;
+  title?: string;
+  name?: string;
+  description?: string;
+  status: string;
+  createdAt?: string;
+  completedAt?: string;
+  amount?: number;
+  currency?: string;
+}
+
+export interface ClientReview {
+  _id: string;
+  businessId: string;
+  clientId: string;
+  jobId: string;
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment?: string;
+}
+
+export interface ClientSubmitReviewInput {
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment?: string;
+}
 
 export interface ClientContract {
   id: string;
@@ -683,6 +708,16 @@ export const clientPortalApi = {
 
   changePassword: async (input: ClientChangePasswordInput): Promise<void> => {
     await withAuth<null>('PATCH', '/client/api/profile/change-password', input);
+  },
+
+  getJobReview: async (jobId: string): Promise<ClientReview> => {
+    const envelope = await withAuth<ClientReview>('GET', `/client/api/jobs/${jobId}/review`);
+    return envelope.data;
+  },
+
+  submitJobReview: async (jobId: string, input: ClientSubmitReviewInput): Promise<ClientReview> => {
+    const envelope = await withAuth<ClientReview>('POST', `/client/api/jobs/${jobId}/review`, input);
+    return envelope.data;
   },
 };
 

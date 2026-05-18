@@ -12,6 +12,7 @@ import {
   ScrollText,
   MessageSquare,
   Contact,
+  Briefcase,
   LogOut,
   Menu,
   X,
@@ -27,6 +28,7 @@ const navItems = [
   { label: 'Invoices', href: '/invoices', icon: FileText },
   { label: 'Files', href: '/files', icon: FolderOpen },
   { label: 'Contracts', href: '/contracts', icon: ScrollText },
+  { label: 'Jobs', href: '/jobs', icon: Briefcase },
   { label: 'Messages', href: '/messages', icon: MessageSquare },
   { label: 'Contacts', href: '/contacts', icon: Contact },
 ] as const;

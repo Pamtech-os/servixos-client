@@ -1,5 +1,6 @@
 import {
   clientPortalApi,
+  ApiError,
   type ClientActivity,
   type ClientContract,
   type ClientConversation,
@@ -7,6 +8,9 @@ import {
   type ClientFile,
   type ClientInvoice,
   type ClientInvoiceFilter,
+  type ClientJob,
+  type ClientReview,
+  type ClientSubmitReviewInput,
 } from '@/lib/api/client-api';
 
 export type { ClientInvoiceFilter } from '@/lib/api/client-api';
@@ -80,7 +84,23 @@ export interface PortalDashboardData {
   activities: PortalActivity[];
 }
 
-export type PortalJob = Record<string, unknown>;
+export interface PortalJob {
+  id: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  completedAt?: string;
+  amount?: number;
+}
+
+export interface PortalReview {
+  id: string;
+  businessId: string;
+  clientId: string;
+  jobId: string;
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment?: string;
+}
 
 const fromMinorUnits = (amount: number): number => amount / 100;
 
@@ -114,6 +134,31 @@ const formatBytes = (bytes: number): string => {
   const fixed = size >= 10 ? size.toFixed(0) : size.toFixed(1);
   return `${fixed} ${units[unitIndex]}`;
 };
+
+const asString = (v: unknown): string =>
+  typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
+
+const mapJob = (job: ClientJob): PortalJob => {
+  const id = asString(job._id || job.id);
+  const title = asString(job.title || job.name || job.description) || 'Untitled Job';
+  return {
+    id,
+    title,
+    status: asString(job.status) || 'unknown',
+    createdAt: toDateLabel(asString(job.createdAt)),
+    completedAt: job.completedAt ? toDateLabel(asString(job.completedAt)) : undefined,
+    amount: typeof job.amount === 'number' ? fromMinorUnits(job.amount) : undefined,
+  };
+};
+
+const mapReview = (review: ClientReview): PortalReview => ({
+  id: review._id,
+  businessId: review.businessId,
+  clientId: review.clientId,
+  jobId: review.jobId,
+  rating: review.rating,
+  comment: review.comment,
+});
 
 const defaultContractContent = (contractName: string) =>
   `${contractName}\n\nThe contract body was not returned in the list payload. Please contact your service provider for the detailed document.`;
@@ -219,7 +264,26 @@ export const getPortalInvoices = async (filter?: ClientInvoiceFilter): Promise<P
 };
 
 export const getPortalJobs = async (): Promise<PortalJob[]> => {
-  return clientPortalApi.listJobs();
+  const jobs = await clientPortalApi.listJobs();
+  return jobs.map(mapJob);
+};
+
+export const getPortalJobReview = async (jobId: string): Promise<PortalReview | null> => {
+  try {
+    const review = await clientPortalApi.getJobReview(jobId);
+    return mapReview(review);
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 404) return null;
+    throw error;
+  }
+};
+
+export const submitPortalJobReview = async (
+  jobId: string,
+  input: ClientSubmitReviewInput
+): Promise<PortalReview> => {
+  const review = await clientPortalApi.submitJobReview(jobId, input);
+  return mapReview(review);
 };
 
 export const getPortalFiles = async (): Promise<PortalFile[]> => {
