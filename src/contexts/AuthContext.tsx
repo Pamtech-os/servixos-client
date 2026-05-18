@@ -7,6 +7,7 @@ import {
   type ClientProfile,
   type ClientSession,
 } from '@/lib/api/client-session';
+import { disconnectClientMessagesSocket } from '@/lib/realtime/client-messages-socket';
 
 interface AuthState {
   isLoggedIn: boolean;
@@ -66,6 +67,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const session = clientSessionStore.get();
       if (!session) {
         if (isMounted) {
+          disconnectClientMessagesSocket();
           setAuth(EMPTY_AUTH);
           setIsHydrated(true);
         }
@@ -84,6 +86,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (!isMounted) return;
 
         clientSessionStore.clear();
+        disconnectClientMessagesSocket();
         setAuth(EMPTY_AUTH);
       } finally {
         if (isMounted) setIsHydrated(true);
@@ -122,6 +125,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Best effort logout - local session should still be cleared.
     } finally {
       clientSessionStore.clear();
+      disconnectClientMessagesSocket();
       setAuth(EMPTY_AUTH);
     }
   };

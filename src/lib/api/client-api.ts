@@ -496,6 +496,25 @@ export interface ClientDashboardData {
   recentActivities: ClientActivity[];
 }
 
+export enum SortOrder {
+  ASC = 'asc',
+  DESC = 'desc',
+}
+
+export enum ClientInvoiceSortBy {
+  DUE_DATE = 'dueDate',
+  AMOUNT = 'amount',
+  ISSUED_DATE = 'issuedDate',
+}
+
+export interface ClientInvoiceFilter {
+  status?: 'paid' | 'partial' | 'unpaid';
+  from?: string;
+  to?: string;
+  sort?: ClientInvoiceSortBy;
+  order?: SortOrder;
+}
+
 export interface ClientInvoice {
   id: string;
   invoiceNumber: string;
@@ -584,8 +603,16 @@ export const clientPortalApi = {
     return envelope.data;
   },
 
-  listInvoices: async (): Promise<ClientInvoice[]> => {
-    const envelope = await withAuth<ClientInvoice[]>('GET', '/client/api/invoices');
+  listInvoices: async (filter?: ClientInvoiceFilter): Promise<ClientInvoice[]> => {
+    const params = new URLSearchParams();
+    if (filter?.status) params.set('status', filter.status);
+    if (filter?.from) params.set('from', filter.from);
+    if (filter?.to) params.set('to', filter.to);
+    if (filter?.sort) params.set('sort', filter.sort);
+    if (filter?.order) params.set('order', filter.order);
+
+    const qs = params.toString();
+    const envelope = await withAuth<ClientInvoice[]>('GET', qs ? `/client/api/invoices?${qs}` : '/client/api/invoices');
     return envelope.data;
   },
 
