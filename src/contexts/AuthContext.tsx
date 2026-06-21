@@ -1,12 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { clientAuthApi, clientPortalApi } from '@/lib/api/client-api';
-import {
-  clientSessionStore,
-  type ClientProfile,
-  type ClientSession,
-} from '@/lib/api/client-session';
+import { clientAuthApi, clientInMemoryAuth, clientPortalApi } from '@/lib/api/client-api';
+import { clientSessionStore, type ClientProfile } from '@/lib/api/client-session';
 import { disconnectClientMessagesSocket } from '@/lib/realtime/client-messages-socket';
 
 interface AuthState {
@@ -51,11 +47,6 @@ const toAuthState = (client: ClientProfile): AuthState => ({
   mustChangePassword: Boolean(client.mustChangePassword),
 });
 
-const withClientProfile = (session: ClientSession, client: ClientProfile): ClientSession => ({
-  ...session,
-  client,
-});
-
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [auth, setAuth] = useState<AuthState>(EMPTY_AUTH);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -64,28 +55,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     let isMounted = true;
 
     const hydrate = async () => {
-      const session = clientSessionStore.get();
-      if (!session) {
-        if (isMounted) {
-          disconnectClientMessagesSocket();
-          setAuth(EMPTY_AUTH);
-          setIsHydrated(true);
-        }
-        return;
-      }
-
-      if (isMounted) setAuth(toAuthState(session.client));
+      // Optimistically show stored profile while the server verifies the cookie.
+      const stored = clientSessionStore.get();
+      if (stored && isMounted) setAuth(toAuthState(stored.client));
 
       try {
         const profile = await clientAuthApi.me();
         if (!isMounted) return;
 
-        clientSessionStore.set(withClientProfile(session, profile));
+        clientSessionStore.set({ client: profile });
         setAuth(toAuthState(profile));
       } catch {
         if (!isMounted) return;
 
         clientSessionStore.clear();
+        clientInMemoryAuth.clear();
         disconnectClientMessagesSocket();
         setAuth(EMPTY_AUTH);
       } finally {
@@ -103,42 +87,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = async (email: string, password: string) => {
     const data = await clientAuthApi.login({ email, password });
 
-    const session: ClientSession = {
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-      client: data.client,
-    };
-
-    clientSessionStore.set(session);
+    clientSessionStore.set({ client: data.client });
+    clientInMemoryAuth.set(data.accessToken);
     setAuth(toAuthState(data.client));
+
     return { mustChangePassword: Boolean(data.client.mustChangePassword) };
   };
 
   const logout = async () => {
-    const session = clientSessionStore.get();
-
     try {
-      if (session?.refreshToken) {
-        await clientAuthApi.logout(session.refreshToken);
-      }
+      await clientAuthApi.logout();
     } catch {
-      // Best effort logout - local session should still be cleared.
+      // Best effort logout — local state is cleared regardless.
     } finally {
       clientSessionStore.clear();
+      clientInMemoryAuth.clear();
       disconnectClientMessagesSocket();
       setAuth(EMPTY_AUTH);
     }
   };
 
   const refreshProfile = async () => {
-    const session = clientSessionStore.get();
-    if (!session) {
-      setAuth(EMPTY_AUTH);
-      return;
-    }
-
     const profile = await clientAuthApi.me();
-    clientSessionStore.set(withClientProfile(session, profile));
+    clientSessionStore.set({ client: profile });
     setAuth(toAuthState(profile));
   };
 
@@ -152,7 +123,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const existingSession = clientSessionStore.get();
     if (existingSession) {
       clientSessionStore.set({
-        ...existingSession,
         client: {
           ...existingSession.client,
           mustChangePassword: false,
@@ -160,6 +130,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
     }
 
+    // Re-login with the new password to rotate cookies while keeping the session alive.
     if (auth.userEmail) {
       try {
         const relogin = await clientAuthApi.login({
@@ -168,15 +139,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         });
 
         clientSessionStore.set({
-          accessToken: relogin.accessToken,
-          refreshToken: relogin.refreshToken,
           client: {
             ...relogin.client,
             mustChangePassword: false,
           },
         });
+        clientInMemoryAuth.set(relogin.accessToken);
       } catch {
-        // If re-login fails, keep current access token and continue this session.
+        // If re-login fails, cookies from the change-password call remain valid.
       }
     }
 

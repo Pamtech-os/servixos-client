@@ -1,4 +1,4 @@
-import { clientSessionStore, type ClientProfile, type ClientSession } from '@/lib/api/client-session';
+import { type ClientProfile } from '@/lib/api/client-session';
 
 interface ApiMeta {
   total: number;
@@ -29,7 +29,6 @@ interface JwtPayload {
 const DEFAULT_API_BASE_URL = 'https://api-dev.servixos.com/api';
 const CLIENT_TOKEN_PATH = '/auth/client-token';
 const CLIENT_TOKEN_EXPIRY_BUFFER_MS = 5_000;
-const ACCESS_TOKEN_EXPIRY_BUFFER_SEC = 30;
 
 const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -89,8 +88,8 @@ const getTokenExpiryMs = (token: string): number | null => {
 const isAccessTokenExpired = (token: string): boolean => {
   const expiryMs = getTokenExpiryMs(token);
   if (!expiryMs) return true;
-
-  return Date.now() >= expiryMs - ACCESS_TOKEN_EXPIRY_BUFFER_SEC * 1000;
+  // 30-second buffer to avoid using a token that's about to expire
+  return Date.now() >= expiryMs - 30_000;
 };
 
 const pathWithQuery = (path: string): string => {
@@ -152,7 +151,18 @@ const hmacSha256Hex = async (payload: string, secret: string): Promise<string> =
 
 let cachedClientToken: ClientTokenData | null = null;
 let clientTokenPromise: Promise<ClientTokenData> | null = null;
-let sessionRefreshPromise: Promise<ClientSession> | null = null;
+let sessionRefreshPromise: Promise<void> | null = null;
+
+// In-memory access token for socket auth — not persisted to localStorage.
+// Tokens in httpOnly cookies can't be read by JS, so we keep a copy in memory
+// solely for the Socket.io handshake. Cleared on logout and page refresh.
+let inMemoryAccessToken: string | null = null;
+
+export const clientInMemoryAuth = {
+  get: () => inMemoryAccessToken,
+  set: (token: string) => { inMemoryAccessToken = token; },
+  clear: () => { inMemoryAccessToken = null; },
+};
 
 const isClientTokenValid = (tokenData: ClientTokenData | null): tokenData is ClientTokenData => {
   if (!tokenData) return false;
@@ -166,7 +176,7 @@ const isClientTokenValid = (tokenData: ClientTokenData | null): tokenData is Cli
 };
 
 const fetchJson = async (url: string, init: RequestInit): Promise<unknown> => {
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, credentials: 'include' });
 
   let payload: unknown = null;
   try {
@@ -251,6 +261,7 @@ const requestEnvelope = async <T>({
   const send = async (forceRefreshClientToken = false): Promise<ApiEnvelope<T>> => {
     const requestHeaders: Record<string, string> = {
       Accept: 'application/json',
+      'x-channel': 'web',
       ...headers,
     };
 
@@ -297,62 +308,48 @@ const requestEnvelope = async <T>({
   }
 };
 
-const refreshClientSession = async (): Promise<ClientSession> => {
-  if (sessionRefreshPromise) return sessionRefreshPromise;
+// Refreshes the session by calling the refresh endpoint. The server rotates the
+// c_refresh_token cookie and sets a new c_access_token cookie automatically.
+// Returns the new access token from the response body (used for socket auth).
+const refreshClientSession = async (): Promise<string> => {
+  if (sessionRefreshPromise) return sessionRefreshPromise as unknown as Promise<string>;
+
+  let resolvedToken = '';
 
   sessionRefreshPromise = (async () => {
-    const current = clientSessionStore.get();
-    if (!current?.refreshToken) {
-      throw new ApiError(401, 'Session expired. Please sign in again.');
-    }
+    const envelope = await requestEnvelope<Record<string, unknown>>({
+      method: 'POST',
+      path: '/client-auth/refresh',
+    });
 
-    const tokens = await clientAuthApi.refresh(current.refreshToken);
+    const accessToken = asNonEmptyString(envelope.data.accessToken);
+    if (!accessToken) throw new ApiError(500, 'Invalid refresh response payload.');
 
-    const nextSession: ClientSession = {
-      ...current,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    };
-
-    clientSessionStore.set(nextSession);
-    return nextSession;
+    inMemoryAccessToken = accessToken;
+    resolvedToken = accessToken;
   })().finally(() => {
     sessionRefreshPromise = null;
   });
 
-  return sessionRefreshPromise;
+  await sessionRefreshPromise;
+  return resolvedToken;
 };
 
+// Makes an authenticated request. Cookies are sent automatically by the browser.
+// On 401, refreshes the session once (rotating the refresh cookie) and retries.
 const withAuth = async <T>(
   method: 'GET' | 'POST' | 'PATCH',
   path: string,
   body?: unknown
 ): Promise<ApiEnvelope<T>> => {
-  const session = clientSessionStore.get();
-  if (!session?.accessToken) {
-    throw new ApiError(401, 'Session expired. Please sign in again.');
-  }
-
-  let accessToken = session.accessToken;
-  if (isAccessTokenExpired(accessToken)) {
-    const refreshed = await refreshClientSession();
-    accessToken = refreshed.accessToken;
-  }
-
-  const requestWithToken = (token: string) =>
-    requestEnvelope<T>({
-      method,
-      path,
-      body,
-      headers: { Authorization: `Bearer ${token}` },
-    });
+  const makeRequest = () => requestEnvelope<T>({ method, path, body });
 
   try {
-    return await requestWithToken(accessToken);
+    return await makeRequest();
   } catch (error) {
     if (error instanceof ApiError && error.statusCode === 401) {
-      const refreshed = await refreshClientSession();
-      return requestWithToken(refreshed.accessToken);
+      await refreshClientSession();
+      return makeRequest();
     }
 
     throw error;
@@ -369,9 +366,8 @@ export interface ClientAuthResetPasswordInput {
   newPassword: string;
 }
 
-export interface ClientAuthSessionData {
+export interface ClientAuthLoginResult {
   accessToken: string;
-  refreshToken: string;
   client: ClientProfile;
 }
 
@@ -408,62 +404,47 @@ const normalizeClientProfile = (value: unknown): ClientProfile => {
   };
 };
 
-const normalizeClientAuthSessionData = (value: unknown): ClientAuthSessionData => {
+const normalizeLoginResponse = (value: unknown): ClientAuthLoginResult => {
   if (!isObject(value)) {
     throw new ApiError(500, 'Invalid login response payload.');
   }
 
+  // accessToken is returned in the body for all channels; we keep it in memory for socket auth.
   const accessToken = asNonEmptyString(value.accessToken);
-  const refreshToken = asNonEmptyString(value.refreshToken);
   const rawProfile = value.user ?? value.client;
 
-  if (!accessToken || !refreshToken || rawProfile == null) {
+  if (!accessToken || rawProfile == null) {
     throw new ApiError(500, 'Invalid login response payload.');
   }
 
   return {
     accessToken,
-    refreshToken,
     client: normalizeClientProfile(rawProfile),
   };
 };
 
 export const clientAuthApi = {
-  login: async (input: ClientAuthLoginInput): Promise<ClientAuthSessionData> => {
+  login: async (input: ClientAuthLoginInput): Promise<ClientAuthLoginResult> => {
     const envelope = await requestEnvelope<unknown>({
       method: 'POST',
       path: '/client-auth/login',
       body: input,
     });
 
-    return normalizeClientAuthSessionData(envelope.data);
+    return normalizeLoginResponse(envelope.data);
   },
 
-  refresh: async (refreshToken: string): Promise<Pick<ClientSession, 'accessToken' | 'refreshToken'>> => {
-    const envelope = await requestEnvelope<Record<string, unknown>>({
-      method: 'POST',
-      path: '/client-auth/refresh',
-      body: { refreshToken },
-    });
-
-    const accessToken = asNonEmptyString(envelope.data.accessToken);
-    const maybeRefreshToken = asNonEmptyString(envelope.data.refreshToken);
-
-    if (!accessToken) {
-      throw new ApiError(500, 'Invalid refresh response payload.');
-    }
-
-    return {
-      accessToken,
-      refreshToken: maybeRefreshToken ?? refreshToken,
-    };
+  // Rotates the refresh cookie and returns the new access token for socket auth.
+  refresh: async (): Promise<{ accessToken: string }> => {
+    const accessToken = await refreshClientSession();
+    return { accessToken };
   },
 
-  logout: async (refreshToken: string): Promise<void> => {
+  // Clears auth cookies server-side. Cookies are sent automatically for x-channel: web.
+  logout: async (): Promise<void> => {
     await requestEnvelope<null>({
       method: 'POST',
       path: '/client-auth/logout',
-      body: { refreshToken },
     });
   },
 
