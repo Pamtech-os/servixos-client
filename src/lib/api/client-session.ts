@@ -11,8 +11,6 @@ export interface ClientProfile {
 }
 
 export interface ClientSession {
-  accessToken: string;
-  refreshToken: string;
   client: ClientProfile;
 }
 
@@ -39,12 +37,7 @@ const isClientProfile = (value: unknown): value is ClientProfile => {
 
 const isClientSession = (value: unknown): value is ClientSession => {
   if (!isObject(value)) return false;
-
-  return (
-    isNonEmptyString(value.accessToken) &&
-    isNonEmptyString(value.refreshToken) &&
-    isClientProfile(value.client)
-  );
+  return isClientProfile(value.client);
 };
 
 const readFromStorage = (): ClientSession | null => {
@@ -90,19 +83,5 @@ export const clientSessionStore = {
   clear(): void {
     memorySession = null;
     writeToStorage(null);
-  },
-
-  updateTokens(tokens: Pick<ClientSession, 'accessToken' | 'refreshToken'>): ClientSession | null {
-    const current = this.get();
-    if (!current) return null;
-
-    const next: ClientSession = {
-      ...current,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    };
-
-    this.set(next);
-    return next;
   },
 };

@@ -1,8 +1,7 @@
 'use client';
 
 import { io, type Socket } from 'socket.io-client';
-import { clientApiUtils, clientAuthApi } from '@/lib/api/client-api';
-import { clientSessionStore, type ClientSession } from '@/lib/api/client-session';
+import { clientApiUtils, clientAuthApi, clientInMemoryAuth } from '@/lib/api/client-api';
 
 const DEFAULT_API_BASE_URL = 'https://api-dev.servixos.com/api';
 
@@ -96,18 +95,16 @@ export type ClientMessagesSocket = Socket<ServerToClientEvents, ClientToServerEv
 
 let socket: ClientMessagesSocket | null = null;
 let connectPromise: Promise<ClientMessagesSocket | null> | null = null;
-let refreshPromise: Promise<ClientSession | null> | null = null;
+let refreshPromise: Promise<string | null> | null = null;
 
-const refreshSessionForSocket = async (): Promise<ClientSession | null> => {
+// Refreshes the session cookie and updates the in-memory access token for socket auth.
+const refreshSessionForSocket = async (): Promise<string | null> => {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const current = clientSessionStore.get();
-    if (!current?.refreshToken) return null;
-
     try {
-      const tokens = await clientAuthApi.refresh(current.refreshToken);
-      return clientSessionStore.updateTokens(tokens);
+      const { accessToken } = await clientAuthApi.refresh();
+      return accessToken;
     } catch {
       return null;
     }
@@ -119,15 +116,13 @@ const refreshSessionForSocket = async (): Promise<ClientSession | null> => {
 };
 
 const getSocketToken = async (): Promise<string | null> => {
-  const session = clientSessionStore.get();
-  if (!session?.accessToken) return null;
+  const token = clientInMemoryAuth.get();
 
-  if (!clientApiUtils.isAccessTokenExpired(session.accessToken)) {
-    return session.accessToken;
+  if (token && !clientApiUtils.isAccessTokenExpired(token)) {
+    return token;
   }
 
-  const refreshed = await refreshSessionForSocket();
-  return refreshed?.accessToken ?? null;
+  return refreshSessionForSocket();
 };
 
 export const getClientMessagesSocket = (): ClientMessagesSocket | null => socket;
