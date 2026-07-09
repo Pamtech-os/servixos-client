@@ -1,6 +1,7 @@
 import {
   clientPortalApi,
   ApiError,
+  type ApiMeta,
   type ClientActivity,
   type ClientContract,
   type ClientConversation,
@@ -9,11 +10,13 @@ import {
   type ClientInvoice,
   type ClientInvoiceFilter,
   type ClientJob,
+  type ClientJobDetail,
+  type ClientJobFilter,
   type ClientReview,
   type ClientSubmitReviewInput,
 } from '@/lib/api/client-api';
 
-export type { ClientInvoiceFilter } from '@/lib/api/client-api';
+export type { ClientInvoiceFilter, ClientJobFilter, ApiMeta } from '@/lib/api/client-api';
 export { SortOrder, ClientInvoiceSortBy } from '@/lib/api/client-api';
 
 export interface PortalInvoice {
@@ -87,10 +90,17 @@ export interface PortalDashboardData {
 export interface PortalJob {
   id: string;
   title: string;
-  status: string;
-  createdAt: string;
+  description?: string;
+  scheduledDate: string;
+  location?: string;
+  price?: number;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+}
+
+export interface PortalJobDetail extends PortalJob {
+  notes?: string;
+  startedAt?: string;
   completedAt?: string;
-  amount?: number;
 }
 
 export interface PortalReview {
@@ -135,21 +145,22 @@ const formatBytes = (bytes: number): string => {
   return `${fixed} ${units[unitIndex]}`;
 };
 
-const asString = (v: unknown): string =>
-  typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
+const mapJob = (job: ClientJob): PortalJob => ({
+  id: job.id,
+  title: job.title,
+  description: job.description,
+  scheduledDate: toDateLabel(job.scheduledDate),
+  location: job.location,
+  price: typeof job.price === 'number' ? fromMinorUnits(job.price) : undefined,
+  status: job.status,
+});
 
-const mapJob = (job: ClientJob): PortalJob => {
-  const id = asString(job._id || job.id);
-  const title = asString(job.title || job.name || job.description) || 'Untitled Job';
-  return {
-    id,
-    title,
-    status: asString(job.status) || 'unknown',
-    createdAt: toDateLabel(asString(job.createdAt)),
-    completedAt: job.completedAt ? toDateLabel(asString(job.completedAt)) : undefined,
-    amount: typeof job.amount === 'number' ? fromMinorUnits(job.amount) : undefined,
-  };
-};
+const mapJobDetail = (job: ClientJobDetail): PortalJobDetail => ({
+  ...mapJob(job),
+  notes: job.notes,
+  startedAt: job.startedAt ? toDateLabel(job.startedAt) : undefined,
+  completedAt: job.completedAt ? toDateLabel(job.completedAt) : undefined,
+});
 
 const mapReview = (review: ClientReview): PortalReview => ({
   id: review._id,
@@ -263,9 +274,16 @@ export const getPortalInvoices = async (filter?: ClientInvoiceFilter): Promise<P
   return invoices.map(mapInvoice);
 };
 
-export const getPortalJobs = async (): Promise<PortalJob[]> => {
-  const jobs = await clientPortalApi.listJobs();
-  return jobs.map(mapJob);
+export const getPortalJobs = async (
+  filter?: ClientJobFilter
+): Promise<{ jobs: PortalJob[]; meta?: ApiMeta }> => {
+  const { jobs, meta } = await clientPortalApi.listJobs(filter);
+  return { jobs: jobs.map(mapJob), meta };
+};
+
+export const getPortalJob = async (jobId: string): Promise<PortalJobDetail> => {
+  const job = await clientPortalApi.getJob(jobId);
+  return mapJobDetail(job);
 };
 
 export const getPortalJobReview = async (jobId: string): Promise<PortalReview | null> => {

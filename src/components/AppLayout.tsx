@@ -14,6 +14,7 @@ import {
   getPortalConversations,
   getPortalFiles,
   getPortalInvoices,
+  getPortalJobs,
   getPortalMessages,
   getServiceProviders,
 } from '@/lib/api/portal-api';
@@ -47,6 +48,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     queryClient.prefetchQuery({ queryKey: queryKeys.invoices, queryFn: () => getPortalInvoices() });
     queryClient.prefetchQuery({ queryKey: queryKeys.files, queryFn: getPortalFiles });
     queryClient.prefetchQuery({ queryKey: queryKeys.contracts, queryFn: getPortalContracts });
+    queryClient.prefetchQuery({ queryKey: queryKeys.jobs, queryFn: () => getPortalJobs() });
     queryClient.prefetchQuery({ queryKey: queryKeys.conversations, queryFn: getPortalConversations });
     queryClient.prefetchQuery({ queryKey: queryKeys.messages, queryFn: getPortalMessages });
     queryClient.prefetchQuery({ queryKey: queryKeys.providers, queryFn: getServiceProviders });

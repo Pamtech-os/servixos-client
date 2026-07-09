@@ -8,12 +8,14 @@ import {
   getPortalConversations,
   getPortalFiles,
   getPortalInvoices,
+  getPortalJob,
   getPortalJobs,
   getPortalJobReview,
   getPortalMessages,
   getServiceProviders,
   submitPortalJobReview,
   type ClientInvoiceFilter,
+  type ClientJobFilter,
 } from '@/lib/api/portal-api';
 import { queryKeys } from '@/lib/server-state/query-keys';
 
@@ -81,11 +83,25 @@ export const usePortalActivitiesQuery = () =>
     staleTime: STALE_TIME,
   });
 
-export const usePortalJobsQuery = () =>
-  useQuery({
-    queryKey: queryKeys.jobs,
-    queryFn: getPortalJobs,
+export const usePortalJobsQuery = (filter?: ClientJobFilter) => {
+  // Normalize so an all-undefined filter hits the same cache slot as no filter,
+  // allowing AppLayout's prefetch (base key) to be reused on initial load.
+  const activeFilter =
+    filter && Object.values(filter).some((v) => v !== undefined) ? filter : undefined;
+
+  return useQuery({
+    queryKey: activeFilter ? ([...queryKeys.jobs, activeFilter] as const) : queryKeys.jobs,
+    queryFn: () => getPortalJobs(activeFilter),
     staleTime: STALE_TIME,
+  });
+};
+
+export const usePortalJobQuery = (jobId: string | null) =>
+  useQuery({
+    queryKey: queryKeys.jobDetail(jobId ?? ''),
+    queryFn: () => getPortalJob(jobId!),
+    staleTime: STALE_TIME,
+    enabled: !!jobId,
   });
 
 export const usePortalJobReviewQuery = (jobId: string | null) =>
