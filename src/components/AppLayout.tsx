@@ -5,15 +5,23 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
 import AppHeader from '@/components/AppHeader';
+import ForcePasswordChangeGate from '@/components/ForcePasswordChangeGate';
 import { useAuth } from '@/contexts/AuthContext';
 import {
+  getPortalDashboard,
   getPortalActivities,
   getPortalContracts,
+  getPortalConversations,
   getPortalFiles,
   getPortalInvoices,
+  getPortalJobs,
   getPortalMessages,
   getServiceProviders,
 } from '@/lib/api/portal-api';
+import {
+  connectClientMessagesSocket,
+  disconnectClientMessagesSocket,
+} from '@/lib/realtime/client-messages-socket';
 import { queryKeys } from '@/lib/server-state/query-keys';
 
 interface AppLayoutProps {
@@ -36,13 +44,27 @@ const AppLayout = ({ children }: AppLayoutProps) => {
   useEffect(() => {
     if (!isHydrated || !auth.isLoggedIn) return;
 
-    queryClient.prefetchQuery({ queryKey: queryKeys.invoices, queryFn: getPortalInvoices });
+    queryClient.prefetchQuery({ queryKey: queryKeys.dashboard, queryFn: getPortalDashboard });
+    queryClient.prefetchQuery({ queryKey: queryKeys.invoices, queryFn: () => getPortalInvoices() });
     queryClient.prefetchQuery({ queryKey: queryKeys.files, queryFn: getPortalFiles });
     queryClient.prefetchQuery({ queryKey: queryKeys.contracts, queryFn: getPortalContracts });
+    queryClient.prefetchQuery({ queryKey: queryKeys.jobs, queryFn: () => getPortalJobs() });
+    queryClient.prefetchQuery({ queryKey: queryKeys.conversations, queryFn: getPortalConversations });
     queryClient.prefetchQuery({ queryKey: queryKeys.messages, queryFn: getPortalMessages });
     queryClient.prefetchQuery({ queryKey: queryKeys.providers, queryFn: getServiceProviders });
     queryClient.prefetchQuery({ queryKey: queryKeys.activities, queryFn: getPortalActivities });
   }, [auth.isLoggedIn, isHydrated, queryClient]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+
+    if (!auth.isLoggedIn) {
+      disconnectClientMessagesSocket();
+      return;
+    }
+
+    void connectClientMessagesSocket();
+  }, [auth.isLoggedIn, isHydrated]);
 
   if (!isHydrated) {
     return <div className='min-h-screen bg-background' />;
@@ -63,6 +85,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
           </main>
         </div>
       </div>
+      <ForcePasswordChangeGate open={auth.mustChangePassword} userEmail={auth.userEmail} />
     </div>
   );
 };

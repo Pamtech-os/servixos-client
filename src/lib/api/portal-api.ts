@@ -1,52 +1,371 @@
 import {
-  portalActivities,
-  portalContracts,
-  portalFiles,
-  portalInvoices,
-  portalMessages,
-  serviceProviders,
-} from '@/lib/portal-mock-data';
-import type {
-  PortalActivity,
-  PortalContract,
-  PortalFile,
-  PortalInvoice,
-  PortalMessage,
-  ServiceProvider,
-} from '@/lib/portal-mock-data';
+  clientPortalApi,
+  ApiError,
+  type ApiMeta,
+  type ClientActivity,
+  type ClientContract,
+  type ClientConversation,
+  type ClientConversationMessage,
+  type ClientFile,
+  type ClientInvoice,
+  type ClientInvoiceFilter,
+  type ClientJob,
+  type ClientJobDetail,
+  type ClientJobFilter,
+  type ClientReview,
+  type ClientSubmitReviewInput,
+} from '@/lib/api/client-api';
 
-const cloneMessages = (messages: PortalMessage[]) =>
-  messages.map((message) => ({
-    ...message,
-    timestamp: new Date(message.timestamp),
+export type { ClientInvoiceFilter, ClientJobFilter, ApiMeta } from '@/lib/api/client-api';
+export { SortOrder, ClientInvoiceSortBy } from '@/lib/api/client-api';
+
+export interface PortalInvoice {
+  id: string;
+  invoiceNumber: string;
+  issuedDate: string;
+  dueDate: string;
+  amount: number;
+  status: 'paid' | 'partial' | 'unpaid';
+}
+
+export interface PortalFile {
+  id: string;
+  filename: string;
+  format: 'pdf' | 'doc' | 'docx' | 'xlsx' | 'png' | 'jpg';
+  filesize: string;
+  generatedDate: string;
+}
+
+export interface PortalContract {
+  id: string;
+  name: string;
+  dateSent: string;
+  amount: number;
+  status: 'signed' | 'awaiting_signature' | 'expired' | 'cancelled';
+  content: string;
+}
+
+export interface PortalMessage {
+  id: string;
+  sender: 'client' | 'business';
+  senderName: string;
+  content: string;
+  timestamp: Date;
+  providerId: string;
+}
+
+export interface PortalConversation {
+  id: string;
+  providerId: string;
+  businessName: string;
+  supportEmail: string;
+  avatarInitials: string;
+  lastMessageContent: string;
+  lastMessageAt: Date | null;
+  clientUnreadCount: number;
+}
+
+export interface ServiceProvider {
+  id: string;
+  businessName: string;
+  supportEmail: string;
+  phone: string;
+  address: string;
+}
+
+export interface PortalActivity {
+  id: string;
+  description: string;
+  date: string;
+  type: 'invoice' | 'payment' | 'contract' | 'file' | 'message';
+}
+
+export interface PortalDashboardData {
+  outstandingBalance: number;
+  totalPaid: number;
+  pendingContracts: number;
+  activities: PortalActivity[];
+}
+
+export interface PortalJob {
+  id: string;
+  title: string;
+  description?: string;
+  scheduledDate: string;
+  location?: string;
+  price?: number;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+}
+
+export interface PortalJobDetail extends PortalJob {
+  notes?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface PortalReview {
+  id: string;
+  businessId: string;
+  clientId: string;
+  jobId: string;
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment?: string;
+}
+
+const fromMinorUnits = (amount: number): number => amount / 100;
+
+const toDateLabel = (value: string | undefined): string => {
+  if (!value) return '--';
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '--';
+
+  return parsed.toISOString().slice(0, 10);
+};
+
+const toActivityLabel = (value: string): string => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const formatBytes = (bytes: number): string => {
+  if (bytes <= 0) return '0 B';
+
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const fixed = size >= 10 ? size.toFixed(0) : size.toFixed(1);
+  return `${fixed} ${units[unitIndex]}`;
+};
+
+const mapJob = (job: ClientJob): PortalJob => ({
+  id: job.id,
+  title: job.title,
+  description: job.description,
+  scheduledDate: toDateLabel(job.scheduledDate),
+  location: job.location,
+  price: typeof job.price === 'number' ? fromMinorUnits(job.price) : undefined,
+  status: job.status,
+});
+
+const mapJobDetail = (job: ClientJobDetail): PortalJobDetail => ({
+  ...mapJob(job),
+  notes: job.notes,
+  startedAt: job.startedAt ? toDateLabel(job.startedAt) : undefined,
+  completedAt: job.completedAt ? toDateLabel(job.completedAt) : undefined,
+});
+
+const mapReview = (review: ClientReview): PortalReview => ({
+  id: review._id,
+  businessId: review.businessId,
+  clientId: review.clientId,
+  jobId: review.jobId,
+  rating: review.rating,
+  comment: review.comment,
+});
+
+const defaultContractContent = (contractName: string) =>
+  `${contractName}\n\nThe contract body was not returned in the list payload. Please contact your service provider for the detailed document.`;
+
+const mapInvoice = (invoice: ClientInvoice): PortalInvoice => ({
+  id: invoice.id,
+  invoiceNumber: invoice.invoiceNumber,
+  issuedDate: toDateLabel(invoice.issuedDate),
+  dueDate: toDateLabel(invoice.dueDate),
+  amount: fromMinorUnits(invoice.amount),
+  status: invoice.status,
+});
+
+const mapContract = (contract: ClientContract): PortalContract => ({
+  id: contract.id,
+  name: contract.name,
+  dateSent: toDateLabel(contract.dateSent),
+  amount: fromMinorUnits(contract.amount),
+  status: contract.status,
+  content: contract.content?.trim() || defaultContractContent(contract.name),
+});
+
+const mapActivity = (activity: ClientActivity): PortalActivity => ({
+  id: activity.id,
+  description: activity.description,
+  date: toActivityLabel(activity.date),
+  type: activity.type,
+});
+
+const mapFile = (file: ClientFile): PortalFile => ({
+  id: file.id,
+  filename: file.filename,
+  format: file.format,
+  filesize: formatBytes(file.filesizeBytes),
+  generatedDate: toDateLabel(file.generatedDate),
+});
+
+const mapConversationsToProviders = (conversations: ClientConversation[]): ServiceProvider[] => {
+  const dedupe = new Map<string, ServiceProvider>();
+
+  conversations.forEach((conversation) => {
+    const provider = conversation.serviceProvider;
+    const existing = dedupe.get(provider.id);
+
+    if (existing) return;
+
+    dedupe.set(provider.id, {
+      id: provider.id,
+      businessName: provider.businessName,
+      supportEmail: provider.supportEmail ?? '',
+      phone: '',
+      address: '',
+    });
+  });
+
+  return Array.from(dedupe.values());
+};
+
+const mapConversation = (conversation: ClientConversation): PortalConversation => {
+  const lastMessageAt = conversation.lastMessageAt ? new Date(conversation.lastMessageAt) : null;
+
+  return {
+    id: conversation.id,
+    providerId: conversation.serviceProvider.id,
+    businessName: conversation.serviceProvider.businessName,
+    supportEmail: conversation.serviceProvider.supportEmail ?? '',
+    avatarInitials: conversation.serviceProvider.avatarInitials,
+    lastMessageContent: conversation.lastMessageContent,
+    lastMessageAt:
+      lastMessageAt && !Number.isNaN(lastMessageAt.getTime()) ? lastMessageAt : null,
+    clientUnreadCount: conversation.clientUnreadCount,
+  };
+};
+
+const mapConversationMessages = (
+  providerId: string,
+  messages: ClientConversationMessage[]
+): PortalMessage[] => {
+  return messages.map((message) => ({
+    id: message.id,
+    sender: message.sender,
+    senderName: message.senderName,
+    content: message.content ?? '',
+    timestamp: new Date(message.createdAt),
+    providerId,
   }));
+};
 
-const cloneContracts = (contracts: PortalContract[]) => contracts.map((contract) => ({ ...contract }));
-const cloneInvoices = (invoices: PortalInvoice[]) => invoices.map((invoice) => ({ ...invoice }));
-const cloneFiles = (files: PortalFile[]) => files.map((file) => ({ ...file }));
-const cloneProviders = (providers: ServiceProvider[]) => providers.map((provider) => ({ ...provider }));
-const cloneActivities = (activities: PortalActivity[]) => activities.map((activity) => ({ ...activity }));
+export const getPortalDashboard = async (): Promise<PortalDashboardData> => {
+  const dashboard = await clientPortalApi.getDashboard();
 
-export const getPortalInvoices = async (): Promise<PortalInvoice[]> => {
-  return cloneInvoices(portalInvoices);
+  return {
+    outstandingBalance: fromMinorUnits(dashboard.outstandingBalance),
+    totalPaid: fromMinorUnits(dashboard.totalPaid),
+    pendingContracts: dashboard.pendingContractsCount,
+    activities: dashboard.recentActivities.map(mapActivity),
+  };
+};
+
+export const getPortalInvoices = async (filter?: ClientInvoiceFilter): Promise<PortalInvoice[]> => {
+  const invoices = await clientPortalApi.listInvoices(filter);
+  return invoices.map(mapInvoice);
+};
+
+export const getPortalJobs = async (
+  filter?: ClientJobFilter
+): Promise<{ jobs: PortalJob[]; meta?: ApiMeta }> => {
+  const { jobs, meta } = await clientPortalApi.listJobs(filter);
+  return { jobs: jobs.map(mapJob), meta };
+};
+
+export const getPortalJob = async (jobId: string): Promise<PortalJobDetail> => {
+  const job = await clientPortalApi.getJob(jobId);
+  return mapJobDetail(job);
+};
+
+export const getPortalJobReview = async (jobId: string): Promise<PortalReview | null> => {
+  try {
+    const review = await clientPortalApi.getJobReview(jobId);
+    return mapReview(review);
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 404) return null;
+    throw error;
+  }
+};
+
+export const submitPortalJobReview = async (
+  jobId: string,
+  input: ClientSubmitReviewInput
+): Promise<PortalReview> => {
+  const review = await clientPortalApi.submitJobReview(jobId, input);
+  return mapReview(review);
 };
 
 export const getPortalFiles = async (): Promise<PortalFile[]> => {
-  return cloneFiles(portalFiles);
+  const files = await clientPortalApi.listFiles();
+  return files.map(mapFile);
+};
+
+export const getPortalFileDownloadUrl = async (fileId: string): Promise<string> => {
+  const data = await clientPortalApi.getFileDownloadUrl(fileId);
+  return data.downloadUrl;
 };
 
 export const getPortalContracts = async (): Promise<PortalContract[]> => {
-  return cloneContracts(portalContracts);
+  const contracts = await clientPortalApi.listContracts();
+  return contracts.map(mapContract);
+};
+
+export const signPortalContract = async (
+  contractId: string,
+  signatureData: string
+): Promise<{ id: string; status: 'signed'; signedAt: string }> => {
+  return clientPortalApi.signContract(contractId, signatureData);
+};
+
+export const getPortalConversations = async (): Promise<PortalConversation[]> => {
+  const conversations = await clientPortalApi.listConversations();
+  return conversations.map(mapConversation);
 };
 
 export const getPortalMessages = async (): Promise<PortalMessage[]> => {
-  return cloneMessages(portalMessages);
+  const conversations = await clientPortalApi.listConversations();
+
+  const messageResults = await Promise.all(
+    conversations.map(async (conversation) => {
+      const rows = await clientPortalApi.listConversationMessages(conversation.serviceProvider.id);
+      return mapConversationMessages(conversation.serviceProvider.id, rows);
+    })
+  );
+
+  return messageResults.flat();
 };
 
 export const getServiceProviders = async (): Promise<ServiceProvider[]> => {
-  return cloneProviders(serviceProviders);
+  try {
+    const contacts = await clientPortalApi.listContacts();
+
+    return contacts.map((contact) => ({
+      id: contact.id,
+      businessName: contact.businessName,
+      supportEmail: contact.supportEmail ?? '',
+      phone: contact.phone ?? '',
+      address: contact.address ?? '',
+    }));
+  } catch {
+    const conversations = await clientPortalApi.listConversations();
+    return mapConversationsToProviders(conversations);
+  }
 };
 
 export const getPortalActivities = async (): Promise<PortalActivity[]> => {
-  return cloneActivities(portalActivities);
+  const activities = await clientPortalApi.listActivities();
+  return activities.map(mapActivity);
+};
+
+export const markConversationRead = async (providerId: string): Promise<void> => {
+  await clientPortalApi.markConversationRead(providerId);
 };

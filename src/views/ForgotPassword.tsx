@@ -9,6 +9,7 @@ import { ArrowLeft, Mail, Sparkles, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ApiError, clientAuthApi } from '@/lib/api/client-api';
 import servixLogo from '@/assets/servix-logo.png';
 import ThemeToggle from '@/components/ThemeToggle';
 import ModernSpinner from '@/components/ModernSpinner';
@@ -53,6 +54,7 @@ const ForgotPassword = () => {
     newPassword?: string;
     confirmPassword?: string;
   }>({});
+  const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const canResend = countdown <= 0;
@@ -81,21 +83,47 @@ const ForgotPassword = () => {
       return;
     }
     setEmailError('');
+    setFormError('');
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setLoading(false);
-    setStep('otp');
-    setCountdown(120);
+
+    try {
+      await clientAuthApi.forgotPassword(email);
+      setStep('otp');
+      setCountdown(120);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setFormError(error.message || 'Unable to send reset code.');
+      } else if (error instanceof Error) {
+        setFormError(error.message);
+      } else {
+        setFormError('Unable to send reset code.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleResendOtp = async () => {
     if (!canResend) return;
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 500));
-    setLoading(false);
-    setCountdown(120);
-    setOtp(['', '', '', '', '', '']);
-    setOtpError('');
+    setFormError('');
+
+    try {
+      await clientAuthApi.forgotPassword(email);
+      setCountdown(120);
+      setOtp(['', '', '', '', '', '']);
+      setOtpError('');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setFormError(error.message || 'Unable to resend code.');
+      } else if (error instanceof Error) {
+        setFormError(error.message);
+      } else {
+        setFormError('Unable to resend code.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const verifyOtpCode = async (code: string) => {
@@ -104,9 +132,7 @@ const ForgotPassword = () => {
       return;
     }
 
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setLoading(false);
+    setFormError('');
     setStep('reset');
   };
 
@@ -142,15 +168,39 @@ const ForgotPassword = () => {
     e.preventDefault();
     const errs: typeof passwordErrors = {};
     if (!newPassword) errs.newPassword = 'Password is required';
-    else if (newPassword.length < 6) errs.newPassword = 'Password must be at least 6 characters';
+    else if (newPassword.length < 8) errs.newPassword = 'Password must be at least 8 characters';
+    else if (!/[A-Z]/.test(newPassword))
+      errs.newPassword = 'Password must include at least one uppercase letter';
+    else if (!/\d/.test(newPassword))
+      errs.newPassword = 'Password must include at least one digit';
     if (!confirmPassword) errs.confirmPassword = 'Please confirm your password';
     else if (newPassword !== confirmPassword) errs.confirmPassword = 'Passwords do not match';
     setPasswordErrors(errs);
     if (Object.keys(errs).length > 0) return;
+
+    const otpCode = otp.join('');
+    if (otpCode.length !== 6) {
+      setFormError('Please enter a valid 6-digit OTP code.');
+      return;
+    }
+
+    setFormError('');
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setLoading(false);
-    router.push('/login');
+
+    try {
+      await clientAuthApi.resetPassword({ otp: otpCode, newPassword });
+      router.push('/login');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setFormError(error.message || 'Unable to reset password.');
+      } else if (error instanceof Error) {
+        setFormError(error.message);
+      } else {
+        setFormError('Unable to reset password.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -247,6 +297,7 @@ const ForgotPassword = () => {
                   'Send Verification Code'
                 )}
               </Button>
+              {formError && <p className='text-center text-xs text-destructive'>{formError}</p>}
               <Link
                 href='/login'
                 className='flex items-center justify-center gap-1 text-sm text-muted-foreground hover:text-foreground'
@@ -304,6 +355,7 @@ const ForgotPassword = () => {
               >
                 {loading ? <ModernSpinner size='md' color='primary-foreground' /> : 'Verify Code'}
               </Button>
+              {formError && <p className='text-center text-xs text-destructive'>{formError}</p>}
             </form>
           )}
 
@@ -349,6 +401,7 @@ const ForgotPassword = () => {
                   'Reset Password'
                 )}
               </Button>
+              {formError && <p className='text-center text-xs text-destructive'>{formError}</p>}
             </form>
           )}
         </div>

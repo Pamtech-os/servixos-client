@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import ModernSpinner from '@/components/ModernSpinner';
 import {
   Table,
   TableBody,
@@ -23,16 +24,19 @@ import {
 } from '@/components/ui/dialog';
 import { usePortalContractsQuery } from '@/lib/server-state/hooks';
 import { queryKeys } from '@/lib/server-state/query-keys';
-import type { PortalContract } from '@/lib/portal-mock-data';
+import { signPortalContract, type PortalContract } from '@/lib/api/portal-api';
 import { toast } from 'sonner';
 import { ScrollText, Pen, Check, AlertTriangle } from 'lucide-react';
 
 const PortalContracts = () => {
   const queryClient = useQueryClient();
-  const { data: contracts = [] } = usePortalContractsQuery();
+  const { data: contracts, isPending } = usePortalContractsQuery();
+  const contractRows = contracts ?? [];
+  const isInitialLoading = isPending && !contracts;
 
   const [selectedContract, setSelectedContract] = useState<PortalContract | null>(null);
   const [signatureError, setSignatureError] = useState(false);
+  const [isSigning, setIsSigning] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
@@ -57,7 +61,7 @@ const PortalContracts = () => {
   };
 
   const openContractDialog = (contractId: string) => {
-    const contractToSign = contracts.find((contract) => contract.id === contractId);
+    const contractToSign = contractRows.find((contract) => contract.id === contractId);
     if (!contractToSign) return;
     setSelectedContract(contractToSign);
     setHasSignature(false);
@@ -104,20 +108,37 @@ const PortalContracts = () => {
     setHasSignature(false);
   };
 
-  const handleSign = () => {
+  const handleSign = async () => {
     if (!hasSignature) {
       setSignatureError(true);
       return;
     }
 
     if (selectedContract) {
-      queryClient.setQueryData<PortalContract[]>(queryKeys.contracts, (prev = []) =>
-        prev.map((contract) =>
-          contract.id === selectedContract.id ? { ...contract, status: 'signed' as const } : contract
-        )
-      );
-      toast.success(`Contract "${selectedContract.name}" signed successfully!`);
-      closeContractDialog();
+      setIsSigning(true);
+
+      try {
+        const signatureData = canvasRef.current?.toDataURL('image/png');
+        if (!signatureData) {
+          setSignatureError(true);
+          return;
+        }
+
+        await signPortalContract(selectedContract.id, signatureData);
+
+        queryClient.setQueryData<PortalContract[]>(queryKeys.contracts, (prev = []) =>
+          prev.map((contract) =>
+            contract.id === selectedContract.id ? { ...contract, status: 'signed' as const } : contract
+          )
+        );
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }).catch(() => undefined);
+        toast.success(`Contract "${selectedContract.name}" signed successfully!`);
+        closeContractDialog();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to sign contract');
+      } finally {
+        setIsSigning(false);
+      }
     }
   };
 
@@ -149,55 +170,86 @@ const PortalContracts = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {contracts.map((contract, i) => (
-                  <motion.tr
-                    key={contract.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.15 + i * 0.04, duration: 0.3 }}
-                    className='border-b border-border transition-colors hover:bg-muted/50'
-                  >
-                    <TableCell>
-                      <div className='flex items-center gap-2'>
-                        <ScrollText className='h-4 w-4 text-primary' />
-                        <span className='font-medium'>{contract.name}</span>
+                {isInitialLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className='py-10'>
+                      <div className='flex items-center justify-center gap-2 text-muted-foreground'>
+                        <ModernSpinner size='sm' color='primary' />
+                        <span className='text-sm'>Loading contracts...</span>
                       </div>
                     </TableCell>
-                    <TableCell>{contract.dateSent}</TableCell>
-                    <TableCell className='text-right font-semibold'>
-                      ${contract.amount.toLocaleString()}
+                  </TableRow>
+                ) : contractRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className='py-10 text-center text-muted-foreground'>
+                      No contracts available yet.
                     </TableCell>
-                    <TableCell>
-                      <div className='flex items-center gap-2'>
-                        {contract.status === 'signed' ? (
-                          <Badge
-                            variant='outline'
-                            className='border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
-                          >
-                            <Check className='mr-1 h-3 w-3' /> Signed
-                          </Badge>
-                        ) : (
-                          <div className='flex items-center gap-2'>
+                  </TableRow>
+                ) : (
+                  contractRows.map((contract, i) => (
+                    <motion.tr
+                      key={contract.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.15 + i * 0.04, duration: 0.3 }}
+                      className='border-b border-border transition-colors hover:bg-muted/50'
+                    >
+                      <TableCell>
+                        <div className='flex items-center gap-2'>
+                          <ScrollText className='h-4 w-4 text-primary' />
+                          <span className='font-medium'>{contract.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{contract.dateSent}</TableCell>
+                      <TableCell className='text-right font-semibold'>
+                        ${contract.amount.toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <div className='flex items-center gap-2'>
+                          {contract.status === 'signed' ? (
                             <Badge
                               variant='outline'
-                              className='border-amber-500/20 bg-amber-500/10 text-amber-600'
+                              className='border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
                             >
-                              Awaiting Signature
+                              <Check className='mr-1 h-3 w-3' /> Signed
                             </Badge>
-                            <Button
-                              size='sm'
+                          ) : contract.status === 'expired' ? (
+                            <Badge
                               variant='outline'
-                              className='gap-1.5 border-primary/30 text-primary hover:bg-primary/10'
-                              onClick={() => openContractDialog(contract.id)}
+                              className='border-destructive/30 bg-destructive/10 text-destructive'
                             >
-                              <Pen size={12} /> Sign Now
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </TableCell>
-                  </motion.tr>
-                ))}
+                              Expired
+                            </Badge>
+                          ) : contract.status === 'cancelled' ? (
+                            <Badge
+                              variant='outline'
+                              className='border-muted-foreground/30 bg-muted text-muted-foreground'
+                            >
+                              Cancelled
+                            </Badge>
+                          ) : (
+                            <div className='flex items-center gap-2'>
+                              <Badge
+                                variant='outline'
+                                className='border-amber-500/20 bg-amber-500/10 text-amber-600'
+                              >
+                                Awaiting Signature
+                              </Badge>
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                className='gap-1.5 border-primary/30 text-primary hover:bg-primary/10'
+                                onClick={() => openContractDialog(contract.id)}
+                              >
+                                <Pen size={12} /> Sign Now
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                    </motion.tr>
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>
@@ -279,6 +331,7 @@ const PortalContracts = () => {
                   onClick={handleSign}
                   className='gradient-bg w-full gap-2 text-primary-foreground'
                   size='lg'
+                  disabled={isSigning}
                 >
                   <Pen size={16} /> Sign & Save
                 </Button>

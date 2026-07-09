@@ -10,47 +10,38 @@ import {
   FolderOpen,
   Banknote,
   Receipt,
+  Loader2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  usePortalActivitiesQuery,
-  usePortalContractsQuery,
-  usePortalInvoicesQuery,
-} from '@/lib/server-state/hooks';
+import { usePortalDashboardQuery } from '@/lib/server-state/hooks';
 
 const PortalDashboard = () => {
-  const { data: invoices = [] } = usePortalInvoicesQuery();
-  const { data: contracts = [] } = usePortalContractsQuery();
-  const { data: activities = [] } = usePortalActivitiesQuery();
+  const { data: dashboard, isPending } = usePortalDashboardQuery();
+  const isInitialLoading = isPending && !dashboard;
 
-  const outstandingBalance = invoices
-    .filter((invoice) => invoice.status !== 'paid')
-    .reduce((sum, invoice) => sum + invoice.amount, 0);
-
-  const totalPaid = invoices
-    .filter((invoice) => invoice.status === 'paid')
-    .reduce((sum, invoice) => sum + invoice.amount, 0);
-
-  const pendingContracts = contracts.filter((contract) => contract.status === 'awaiting_signature').length;
+  const outstandingBalance = dashboard?.outstandingBalance;
+  const totalPaid = dashboard?.totalPaid;
+  const pendingContracts = dashboard?.pendingContracts;
+  const activities = dashboard?.activities ?? [];
 
   const statCards = [
     {
       label: 'Outstanding Balance',
-      value: `$${outstandingBalance.toLocaleString()}`,
+      value: typeof outstandingBalance === 'number' ? `$${outstandingBalance.toLocaleString()}` : '...',
       icon: DollarSign,
       color: 'text-destructive',
       bg: 'bg-destructive/10',
     },
     {
       label: 'Total Paid',
-      value: `$${totalPaid.toLocaleString()}`,
+      value: typeof totalPaid === 'number' ? `$${totalPaid.toLocaleString()}` : '...',
       icon: CreditCard,
       color: 'text-emerald-600',
       bg: 'bg-emerald-500/10',
     },
     {
       label: 'Pending Contracts',
-      value: pendingContracts.toString(),
+      value: typeof pendingContracts === 'number' ? pendingContracts.toString() : '...',
       icon: ScrollText,
       color: 'text-amber-600',
       bg: 'bg-amber-500/10',
@@ -114,33 +105,46 @@ const PortalDashboard = () => {
           </CardHeader>
           <CardContent>
             <div className='space-y-3'>
-              {activities.slice(0, 10).map((activity, i) => {
-                const Icon = activityIcons[activity.type] || FileText;
-                return (
-                  <motion.div
-                    key={activity.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.4 + i * 0.05, duration: 0.3 }}
-                    className='flex items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/50 sm:items-center'
-                  >
-                    <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10'>
-                      <Icon className='h-4 w-4 text-primary' />
-                    </div>
-                    <div className='min-w-0 flex-1'>
-                      <p className='text-sm font-medium leading-snug sm:truncate'>
-                        {activity.description}
-                      </p>
-                      <span className='mt-1 block text-xs text-muted-foreground sm:hidden'>
+              {isInitialLoading ? (
+                <div className='flex items-center justify-center gap-2 rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground'>
+                  <Loader2 className='h-4 w-4 animate-spin' />
+                  <p className='text-sm'>Loading recent activity...</p>
+                </div>
+              ) : activities.length === 0 ? (
+                <div className='rounded-lg border border-dashed border-border p-8 text-center'>
+                  <p className='text-sm text-muted-foreground'>
+                    No recent activity yet. Your latest updates will appear here.
+                  </p>
+                </div>
+              ) : (
+                activities.slice(0, 10).map((activity, i) => {
+                  const Icon = activityIcons[activity.type] || FileText;
+                  return (
+                    <motion.div
+                      key={activity.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.4 + i * 0.05, duration: 0.3 }}
+                      className='flex items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/50 sm:items-center'
+                    >
+                      <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10'>
+                        <Icon className='h-4 w-4 text-primary' />
+                      </div>
+                      <div className='min-w-0 flex-1'>
+                        <p className='text-sm font-medium leading-snug sm:truncate'>
+                          {activity.description}
+                        </p>
+                        <span className='mt-1 block text-xs text-muted-foreground sm:hidden'>
+                          {activity.date}
+                        </span>
+                      </div>
+                      <span className='hidden shrink-0 text-xs text-muted-foreground sm:block'>
                         {activity.date}
                       </span>
-                    </div>
-                    <span className='hidden shrink-0 text-xs text-muted-foreground sm:block'>
-                      {activity.date}
-                    </span>
-                  </motion.div>
-                );
-              })}
+                    </motion.div>
+                  );
+                })
+              )}
             </div>
           </CardContent>
         </Card>
