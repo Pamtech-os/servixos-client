@@ -1,6 +1,6 @@
 import { type ClientProfile } from '@/lib/api/client-session';
 
-interface ApiMeta {
+export interface ApiMeta {
   total: number;
   page: number;
   limit: number;
@@ -506,17 +506,28 @@ export interface ClientInvoice {
   currency: string;
 }
 
+export type JobStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface ClientJobFilter {
+  status?: JobStatus;
+  page?: number;
+  limit?: number;
+}
+
 export interface ClientJob {
-  _id?: string;
-  id?: string;
-  title?: string;
-  name?: string;
+  id: string;
+  title: string;
   description?: string;
-  status: string;
-  createdAt?: string;
+  scheduledDate: string;
+  location?: string;
+  price?: number;
+  status: JobStatus;
+}
+
+export interface ClientJobDetail extends ClientJob {
+  notes?: string;
+  startedAt?: string;
   completedAt?: string;
-  amount?: number;
-  currency?: string;
 }
 
 export interface ClientReview {
@@ -622,8 +633,19 @@ export const clientPortalApi = {
     return envelope.data;
   },
 
-  listJobs: async (): Promise<ClientJob[]> => {
-    const envelope = await withAuth<ClientJob[]>('GET', '/client/api/jobs');
+  listJobs: async (filter?: ClientJobFilter): Promise<{ jobs: ClientJob[]; meta?: ApiMeta }> => {
+    const params = new URLSearchParams();
+    if (filter?.status) params.set('status', filter.status);
+    if (filter?.page) params.set('page', String(filter.page));
+    if (filter?.limit) params.set('limit', String(filter.limit));
+
+    const qs = params.toString();
+    const envelope = await withAuth<ClientJob[]>('GET', qs ? `/client/api/jobs?${qs}` : '/client/api/jobs');
+    return { jobs: envelope.data, meta: envelope.meta };
+  },
+
+  getJob: async (jobId: string): Promise<ClientJobDetail> => {
+    const envelope = await withAuth<ClientJobDetail>('GET', `/client/api/jobs/${jobId}`);
     return envelope.data;
   },
 

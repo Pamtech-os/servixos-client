@@ -8,5 +8,6 @@ export const queryKeys = {
   providers: ['portal', 'providers'] as const,
   activities: ['portal', 'activities'] as const,
   jobs: ['portal', 'jobs'] as const,
+  jobDetail: (jobId: string) => ['portal', 'jobs', jobId] as const,
   jobReview: (jobId: string) => ['portal', 'jobs', jobId, 'review'] as const,
 };
