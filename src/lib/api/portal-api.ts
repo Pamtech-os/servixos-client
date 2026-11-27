@@ -41,6 +41,8 @@ export interface PortalContract {
   name: string;
   dateSent: string;
   amount: number;
+  /** ISO 4217 code the business bills in, e.g. "NGN". */
+  currency: string;
   status: 'signed' | 'awaiting_signature' | 'expired' | 'cancelled';
   content: string;
 }
@@ -188,6 +190,7 @@ const mapContract = (contract: ClientContract): PortalContract => ({
   name: contract.name,
   dateSent: toDateLabel(contract.dateSent),
   amount: fromMinorUnits(contract.amount),
+  currency: contract.currency,
   status: contract.status,
   content: contract.content?.trim() || defaultContractContent(contract.name),
 });
@@ -317,6 +320,20 @@ export const getPortalFileDownloadUrl = async (fileId: string): Promise<string> 
 export const getPortalContracts = async (): Promise<PortalContract[]> => {
   const contracts = await clientPortalApi.listContracts();
   return contracts.map(mapContract);
+};
+
+/** One contract with its full body, for reading before signing. */
+export const getPortalContract = async (contractId: string): Promise<PortalContract> => {
+  return mapContract(await clientPortalApi.getContract(contractId));
+};
+
+/** "NGN 450,000.00", in the business's own currency. */
+export const formatContractAmount = (amount: number, currency: string): string => {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  }
 };
 
 export const signPortalContract = async (

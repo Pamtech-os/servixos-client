@@ -654,6 +654,15 @@ export const clientPortalApi = {
     return envelope.data;
   },
 
+  /** One contract with its full body (the list leaves the body out). */
+  getContract: async (contractId: string): Promise<ClientContract> => {
+    const envelope = await withAuth<ClientContract>(
+      'GET',
+      `/client/api/contracts/${encodeURIComponent(contractId)}`
+    );
+    return envelope.data;
+  },
+
   signContract: async (
     contractId: string,
     signatureData: string

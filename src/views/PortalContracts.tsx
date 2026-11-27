@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState, useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,12 @@ import {
 } from '@/components/ui/dialog';
 import { usePortalContractsQuery } from '@/lib/server-state/hooks';
 import { queryKeys } from '@/lib/server-state/query-keys';
-import { signPortalContract, type PortalContract } from '@/lib/api/portal-api';
+import {
+  formatContractAmount,
+  getPortalContract,
+  signPortalContract,
+  type PortalContract,
+} from '@/lib/api/portal-api';
 import { toast } from 'sonner';
 import { ScrollText, Pen, Check, AlertTriangle } from 'lucide-react';
 
@@ -40,6 +45,13 @@ const PortalContracts = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
+
+  // The list leaves the contract body out, so load it when the contract is opened.
+  const contractDetail = useQuery({
+    queryKey: ['portal-contract', selectedContract?.id],
+    queryFn: () => getPortalContract(selectedContract!.id),
+    enabled: !!selectedContract,
+  });
 
   useEffect(() => {
     if (selectedContract && canvasRef.current) {
@@ -202,7 +214,7 @@ const PortalContracts = () => {
                       </TableCell>
                       <TableCell>{contract.dateSent}</TableCell>
                       <TableCell className='text-right font-semibold'>
-                        ${contract.amount.toLocaleString()}
+                        {formatContractAmount(contract.amount, contract.currency)}
                       </TableCell>
                       <TableCell>
                         <div className='flex items-center gap-2'>
@@ -270,15 +282,30 @@ const PortalContracts = () => {
 
           {selectedContract && (
             <div className='space-y-6'>
-              <div className='rounded-lg border border-border bg-muted/30 p-6'>
-                <pre className='whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground'>
-                  {selectedContract.content}
-                </pre>
-              </div>
+              {contractDetail.isPending ? (
+                <div className='flex h-40 items-center justify-center'>
+                  <ModernSpinner />
+                </div>
+              ) : contractDetail.isError ? (
+                <p className='rounded-lg border border-border bg-muted/30 p-6 text-sm text-muted-foreground'>
+                  We couldn&apos;t load this contract. Close it and try again.
+                </p>
+              ) : (
+                // The contract is a styled document written for a white page. A sandboxed iframe
+                // keeps it readable in dark mode, keeps its styles out of the portal, and blocks scripts.
+                <iframe
+                  title={selectedContract.name}
+                  sandbox=''
+                  srcDoc={contractDocument(contractDetail.data.content)}
+                  className='h-[50vh] w-full rounded-lg border border-border bg-white'
+                />
+              )}
 
               <div className='flex items-center justify-between rounded-lg bg-muted/50 px-4 py-3 text-sm'>
                 <span className='text-muted-foreground'>Contract Value</span>
-                <span className='text-lg font-bold'>${selectedContract.amount.toLocaleString()}</span>
+                <span className='text-lg font-bold'>
+                  {formatContractAmount(selectedContract.amount, selectedContract.currency)}
+                </span>
               </div>
 
               <div className='space-y-2'>
@@ -345,3 +372,14 @@ const PortalContracts = () => {
 };
 
 export default PortalContracts;
+
+const escapeHtml = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Wraps the contract in a white page; plain-text contracts keep their line breaks. */
+function contractDocument(content: string): string {
+  const body = /<[a-z][\s\S]*>/i.test(content)
+    ? content
+    : `<pre style="white-space:pre-wrap;font:inherit">${escapeHtml(content)}</pre>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff;color:#111827;color-scheme:light;font:14px/1.6 system-ui,sans-serif}body{padding:20px}</style></head><body>${body}</body></html>`;
+}
